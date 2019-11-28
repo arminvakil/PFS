@@ -1,0 +1,71 @@
+// Copyright 2015 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package ParallelFileSystem;
+
+// The greeting service definition.
+service MetadataManager {
+  rpc CreateFile 	(CreateFileRequest)		returns (StatusReply) {}
+  rpc OpenFile		(OpenFileRequest)		returns (StatusReply) {}
+  rpc ReadFile		(AccessFileRequest)		returns (PermissionReply) {}
+  rpc WriteFile		(AccessFileRequest)		returns (PermissionReply) {}
+  rpc CloseFile		(CloseFileRequest)		returns (StatusReply) {}
+  rpc DeleteFile	(CloseFileRequest)		returns (StatusReply) {}
+  rpc GetFileDesc	(GetFileDescRequest)	returns (FileStatReply) {}
+}
+
+message StatusReply {
+	int32 error = 1;
+}
+
+message CreateFileRequest {
+  string name = 1;
+  int32 stripeWidth = 2;
+}
+
+message OpenFileRequest {
+	string name = 1;
+	string mode = 2;
+}
+
+message AccessFileRequest {
+	int32 start = 1;
+	int32 end = 2;
+	bool isWrite = 3;
+}
+
+message PermissionReply {
+	int32 start = 1;
+	int32 end = 2;
+}
+
+message CloseFileRequest {
+	string name = 1;
+}
+
+message DeleteFileRequest {
+	string name = 1;
+}
+
+message GetFileDescRequest {
+	string name = 1;
+}
+
+message FileStatReply {
+  int64 lastModified = 1; /* time of last data modification */
+  int64 creationTime = 2; /* time of creation */
+  int64 fileSize = 3;    /* File size in bytes */
+}

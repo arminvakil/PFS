@@ -1,0 +1,9 @@
+*.o
+*/*.o
+*/*.pb.h
+*/*.pb.cc
+.cproject
+.project
+.settings
+client
+metadata_manager
