@@ -35,7 +35,7 @@ PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 
-BINARIES= client metadata_manager
+BINARIES= pfsClient metadataManager
 
 PROTOS_PATH = protos
 
@@ -52,11 +52,15 @@ GRPC_PROTOS_CPP_FILES =  $(PROTOS_FILES:%.proto=%.grpc.pb.cc)
 GRPC_PROTOS_OBJS = $(PROTOS_FILES:%.proto=%.grpc.pb.o)
 COMMON_FILES = $(wildcard common/*.cpp)
 COMMON_OBJS = $(COMMON_FILES:%.cpp=%.o)
+PFSCLIENT_FILES = $(wildcard client/*.cpp)
+PFSCLIENT_OBJS = $(PFSCLIENT_FILES:%.cpp=%.o)
+METADATA_MANAGER_FILES = $(wildcard metadata_manager/*.cpp)
+METADATA_MANAGER_OBJS = $(METADATA_MANAGER_FILES:%.cpp=%.o)
 
-client: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} test1-c1.o
+pfsClient: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} test1-c1.o
 	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@ 
 	
-metadata_manager : ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} pfs_MM.o
+metadataManager : ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${METADATA_MANAGER_OBJS} pfs_MM.o
 	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@
 
 #greeter_server: helloworld.pb.o helloworld.grpc.pb.o greeter_server.o
@@ -73,7 +77,7 @@ metadata_manager : ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} pfs_MM.o
 clean:
 	rm -f ${COMMON_OBJS} ${PROTOS_CPP_FILES} ${PROTOS_CPP_HEADERS} ${PROTOS_OBJS} \
 	 ${GRPC_PROTOS_CPP_FILES} ${GRPC_PROTOS_CPP_HEADERS} ${GRPC_PROTOS_OBJS} \
-	 *.o *.pb.cc *.pb.h ${BINARIES}
+	 *.o */*.o *.pb.cc *.pb.h ${BINARIES}
 
 
 # The following is to test your system and ensure a smoother experience.

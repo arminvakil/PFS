@@ -5,5 +5,5 @@
 .cproject
 .project
 .settings
-client
-metadata_manager
+pfsClient
+metadataManager

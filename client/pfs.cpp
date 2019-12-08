@@ -13,6 +13,11 @@ void initialize(int argc, char** argv) {
 	return;
 }
 
+void finalize() {
+	sleep(1);
+	PFSClient::getInstance()->finalize();
+}
+
 int pfs_create(const char *filename, int stripe_width) {
 	return PFSClient::getInstance()->createFile(filename, stripe_width);
 }

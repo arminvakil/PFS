@@ -12,6 +12,11 @@
 #include <unistd.h>
 #include <memory>
 #include <string>
+#include <vector>
+#include <pthread.h>
+
+#include "client_file.h"
+#include "client_service.h"
 
 #include <grpcpp/grpcpp.h>
 #include <message.grpc.pb.h>
@@ -24,10 +29,15 @@ using ParallelFileSystem::MetadataManager;
 using namespace ParallelFileSystem;
 
 class PFSClient {
+	std::vector<ClientFile*> openedFiles;
 	PFSClient();
 	virtual ~PFSClient();
 
 	static PFSClient* _instance;
+
+	static pthread_t clientServiceThread;
+
+	static std::unique_ptr<Server> client;
 public:
 
 	static inline PFSClient* getInstance() {
@@ -39,9 +49,17 @@ public:
 
 	void initialize(int argc, char** argv);
 
+	void finalize();
+
+	static void* clientServiceFunc(void* client_no);
+
 	int createFile(const char *filename, int stripe_width);
 
 	int openFile(const char *filename, const char mode);
+
+	int acquirePermission(int filedes, off_t start, off_t end, bool write);
+
+	void revokePermission(std::string filename, uint32_t start, uint32_t end, bool write);
 
 	ssize_t readFile(int filedes, void *buf, ssize_t nbyte, off_t offset, int *cache_hit);
 
@@ -55,6 +73,7 @@ public:
 
 private:
 	std::shared_ptr<MetadataManager::Stub> stub_;
+	std::shared_ptr<grpc::Channel> channel_;
 };
 
 #endif /* _CLIENT_H_ */

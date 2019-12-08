@@ -19,21 +19,32 @@ package ParallelFileSystem;
 // The greeting service definition.
 service MetadataManager {
   rpc CreateFile 	(CreateFileRequest)		returns (StatusReply) {}
-  rpc OpenFile		(OpenFileRequest)		returns (StatusReply) {}
-  rpc ReadFile		(AccessFileRequest)		returns (PermissionReply) {}
-  rpc WriteFile		(AccessFileRequest)		returns (PermissionReply) {}
+  rpc OpenFile		(OpenFileRequest)		returns (FileStatReply) {}
+  rpc GetPermission (PermissionRequest)		returns (PermissionReply) {}
+//  rpc WriteFile		(AccessFileRequest)		returns (PermissionReply) {}
   rpc CloseFile		(CloseFileRequest)		returns (StatusReply) {}
-  rpc DeleteFile	(CloseFileRequest)		returns (StatusReply) {}
+  rpc DeleteFile	(DeleteFileRequest)		returns (StatusReply) {}
   rpc GetFileDesc	(GetFileDescRequest)	returns (FileStatReply) {}
+
+  rpc ClientStart	(ClientStartRequest)		returns (StatusReply) {}
+}
+
+// The greeting service definition.
+service Client {
+  rpc RevokePermission	(RevokePermissionRequest)	returns (StatusReply) {}
 }
 
 message StatusReply {
 	int32 error = 1;
 }
 
+message ClientStartRequest {
+	string ip = 1;
+}
+
 message CreateFileRequest {
   string name = 1;
-  int32 stripeWidth = 2;
+  uint32 stripeWidth = 2;
 }
 
 message OpenFileRequest {
@@ -41,15 +52,17 @@ message OpenFileRequest {
 	string mode = 2;
 }
 
-message AccessFileRequest {
-	int32 start = 1;
-	int32 end = 2;
-	bool isWrite = 3;
+message PermissionRequest {
+	string name = 1;
+	uint32 start = 2;
+	uint32 end = 3;
+	bool isWrite = 4;
 }
 
 message PermissionReply {
-	int32 start = 1;
-	int32 end = 2;
+	int32 error = 1;
+	uint32 start = 2;
+	uint32 end = 3;
 }
 
 message CloseFileRequest {
@@ -65,7 +78,15 @@ message GetFileDescRequest {
 }
 
 message FileStatReply {
-  int64 lastModified = 1; /* time of last data modification */
-  int64 creationTime = 2; /* time of creation */
-  int64 fileSize = 3;    /* File size in bytes */
+	int32 error = 1;
+	int64 lastModified = 2; /* time of last data modification */
+	int64 creationTime = 3; /* time of creation */
+	uint64 fileSize = 4;    /* File size in bytes */
+}
+
+message RevokePermissionRequest {
+	string name = 1;
+	uint32 start = 2;
+	uint32 end = 3;
+	bool isWrite = 4;
 }

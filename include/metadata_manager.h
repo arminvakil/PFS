@@ -12,11 +12,12 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include <semaphore.h>
 
 #include <grpcpp/grpcpp.h>
 
 #include "message.grpc.pb.h"
-#include "file.h"
+#include "mm_file.h"
 #include "util.h"
 
 using grpc::Server;
@@ -25,37 +26,43 @@ using grpc::ServerContext;
 using grpc::Status;
 using namespace ParallelFileSystem;
 using ParallelFileSystem::MetadataManager;
+using grpc::Channel;
+using grpc::ClientContext;
 
 class MetadataManagerServiceImpl final : public MetadataManager::Service {
-	std::unordered_map<std::string, File*> files;
+	std::unordered_map<std::string, MMFile*> files;
+	static std::unordered_map<std::string, std::shared_ptr<Client::Stub>> clientStubs;
+	pthread_mutex_t filesLock;
 public:
 	MetadataManagerServiceImpl();
 	virtual ~MetadataManagerServiceImpl();
 
+	Status ClientStart(ServerContext* context,
+			const ParallelFileSystem::ClientStartRequest* request,
+			ParallelFileSystem::StatusReply* reply) override;
+
 	Status CreateFile(ServerContext* context,
 			const ParallelFileSystem::CreateFileRequest* request,
-			ParallelFileSystem::StatusReply* reply) override {
-		if(files.find(request->name()) != files.end()) {
-			std::cout << "File " << request->name() << " already exists\n";
-			reply->set_error(ERROR_ALREADY_EXISTS);
-			return Status::CANCELLED;
-		}
-		File* file = new File();
-		file->setName(request->name());
-		file->setSize(0);
-		file->setCreationTime(time(0));
-		file->setLastModifiedTime(time(0));
-		files[request->name()] = file;
-		std::cout << "File " << request->name() << " is created\n";
-		return Status::OK;
-	}
-//	Status SayHelloAgain(ServerContext* context, const HelloRequest* request,
-//			HelloReply* reply) override {
-//		std::string prefix("Hello again ");
-//		reply->set_message(prefix + request->name());
-//		std::cout << "Hello again request is serviced\n";
-//		return Status::OK;
-//	}
+			ParallelFileSystem::StatusReply* reply) override;
+
+	Status OpenFile(ServerContext* context,
+			const ParallelFileSystem::OpenFileRequest* request,
+			ParallelFileSystem::FileStatReply* reply) override;
+
+	Status CloseFile(ServerContext* context,
+			const ParallelFileSystem::CloseFileRequest* request,
+			ParallelFileSystem::StatusReply* reply) override;
+
+	Status DeleteFile(ServerContext* context,
+			const ParallelFileSystem::DeleteFileRequest* request,
+			ParallelFileSystem::StatusReply* reply) override;
+
+	Status GetPermission(ServerContext* context,
+			const ParallelFileSystem::PermissionRequest* request,
+			ParallelFileSystem::PermissionReply* reply) override;
+
+	static pthread_t* sendRevokePermissionRequest(std::string peer, std::string filename,
+			uint32_t start, uint32_t end, bool write);
 };
 
 #endif /* COMMON_METADATA_MANAGER_H_ */

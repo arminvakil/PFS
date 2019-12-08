@@ -15,6 +15,8 @@
 
 void initialize(int argc, char** argv);
 
+void finalize();
+
 int pfs_create(const char *filename, int stripe_width);
 
 int pfs_open(const char *filename, const char mode);
