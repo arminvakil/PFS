@@ -25,6 +25,15 @@ void PFSClient::initialize(int argc, char** argv) {
 	channel_ = grpc::CreateChannel("localhost:50051", grpc::InsecureChannelCredentials());
 	stub_ = MetadataManager::NewStub(channel_);
 
+	for(int i = 0; i < NUM_FILE_SERVERS; i++) {
+		std::string file_server_address("0.0.0.0:3000");
+		file_server_address.push_back(char('0' + i));
+		std::shared_ptr<FileServer::Stub> stub_ =
+				FileServer::NewStub(grpc::CreateChannel(
+						file_server_address, grpc::InsecureChannelCredentials()));
+		fileServerStubs.push_back(stub_);
+	}
+
 	pthread_create(&clientServiceThread, nullptr, &(PFSClient::clientServiceFunc), (void*)argv[2]);
 
 	ClientStartRequest request;
@@ -126,6 +135,10 @@ int PFSClient::openFile(const char *filename, const char mode) {
 	if (status.ok()) {
 		ClientFile* file = new ClientFile();
 		file->setName(filename);
+		file->setCreationTime(reply.creationtime());
+		file->setLastModifiedTime(reply.lastmodified());
+		file->setSize(reply.filesize());
+		file->setStripWidth(reply.stripwidth());
 		openedFiles.push_back(file);
 		return file->getDescriptor();
 	} else {
@@ -216,9 +229,48 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 		// error
 		return foundAt;
 	}
-	// TODO do actual read to the server
-	openedFiles[foundAt]->unlockPermission(offset, offset + nbyte, false);
-	return 0;
+
+	ssize_t nbyteBackup = nbyte;
+	off_t offsetBackup = offset;
+
+	char* data = (char*)buf;
+
+	while(nbyte > 0) {
+		int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
+				openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
+		uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
+		lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
+		lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
+
+		std::cerr << "sending request to : " << fileServerIndex << " " <<
+				offset << " " << std::min(lastByteInFileServer - offset, nbyte) << "\n";
+
+		ReadFileRequest request;
+		request.set_name(openedFiles[foundAt]->getName());
+		request.set_start(offset);
+		request.set_size(std::min(lastByteInFileServer - offset, nbyte));
+
+		// Container for the data we expect from the server.
+		DataReply reply;
+
+		// Context for the client. It could be used to convey extra information to
+		// the server and/or tweak certain RPC behaviors.
+		ClientContext context;
+
+		// The actual RPC.
+		Status status = fileServerStubs[fileServerIndex]->ReadFile(&context, request, &reply);
+
+		// Act upon its status.
+		assert(status.ok());
+		assert(reply.data().size() == request.size());
+		memcpy(data, reply.data().c_str(), request.size());
+
+		data += std::min(lastByteInFileServer - offset, nbyte);
+		nbyte -= std::min(lastByteInFileServer - offset, nbyte);
+		offset = lastByteInFileServer;
+	}
+	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, false);
+	return nbyte;
 }
 
 ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
@@ -233,10 +285,46 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 		// error
 		return foundAt;
 	}
-	sleep(5);
-	// TODO do actual write to the server
-	openedFiles[foundAt]->unlockPermission(offset, offset + nbyte, true);
-	return 0;
+
+	size_t nbyteBackup = nbyte;
+	off_t offsetBackup = offset;
+	char* data = (char*)(buf);
+
+	while(nbyte > 0) {
+		int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
+				openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
+		uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
+		lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
+		lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
+
+		std::cerr << "sending request to : " << fileServerIndex << " " <<
+				offset << " " << std::min(lastByteInFileServer - offset, (ssize_t)nbyte) << "\n";
+
+		WriteFileRequest request;
+		request.set_name(openedFiles[foundAt]->getName());
+		request.set_start(offset);
+		request.set_data(buf, std::min(lastByteInFileServer - offset, (ssize_t)nbyte));
+
+		// Container for the data we expect from the server.
+		StatusReply reply;
+
+		// Context for the client. It could be used to convey extra information to
+		// the server and/or tweak certain RPC behaviors.
+		ClientContext context;
+
+		// The actual RPC.
+		Status status = fileServerStubs[fileServerIndex]->WriteFile(&context, request, &reply);
+
+		// Act upon its status.
+		assert(status.ok());
+
+		data += std::min(lastByteInFileServer - offset, (ssize_t)nbyte);
+		nbyte -= std::min(lastByteInFileServer - offset, (ssize_t)nbyte);
+		offset = lastByteInFileServer;
+	}
+
+	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, true);
+	return nbyteBackup;
 }
 
 int PFSClient::closeFile(int filedes) {

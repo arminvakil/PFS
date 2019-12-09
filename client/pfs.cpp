@@ -14,7 +14,6 @@ void initialize(int argc, char** argv) {
 }
 
 void finalize() {
-	sleep(1);
 	PFSClient::getInstance()->finalize();
 }
 

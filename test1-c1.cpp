@@ -37,13 +37,15 @@ int main(int argc, char *argv[]) {
 
 	strcpy(input_fname, argv[1]);
 	ifdes = open(input_fname, O_RDONLY);
-	buf = (char *) malloc(5 * ONEKB);
-	nread = pread(ifdes, (void *) buf, 4 * ONEKB, 0);
+	buf = (char *) malloc(30 * ONEKB);
+	for(int i = 0; i < 30 * ONEKB; i++)
+		buf[i] = 3*i;
+//	nread = pread(ifdes, (void *) buf, 4 * ONEKB, 0);
 
 	char pfs_fname[20];
 	strcpy(pfs_fname, argv[1]);
 	// create a file only once, say at client 1
-	err_value = pfs_create(pfs_fname, 3);
+	err_value = pfs_create(pfs_fname, 7);
 //	err_value = pfs_create("pfs_file1", 3);
 	if (err_value < 0) {
 		printf("Unable to create a file\n");
@@ -62,6 +64,9 @@ int main(int argc, char *argv[]) {
 	//Write the first 200 bytes of data from the input file onto pfs_file
 	err_value = pfs_write(fdes, (void *) buf, end - start, start, &cache_hit);
 	printf("Wrote %d bytes to the file\n", err_value);
+
+	char* read_buf = new char[end - start];
+	err_value = pfs_read(fdes, (void *) read_buf, end - start, start, &cache_hit);
 
 	pfs_close(fdes);
 	free(buf);

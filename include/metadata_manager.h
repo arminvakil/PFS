@@ -9,10 +9,11 @@
 #define COMMON_METADATA_MANAGER_H_
 
 #include <iostream>
-#include <unordered_map>
 #include <memory>
-#include <string>
 #include <semaphore.h>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <grpcpp/grpcpp.h>
 
@@ -32,6 +33,7 @@ using grpc::ClientContext;
 class MetadataManagerServiceImpl final : public MetadataManager::Service {
 	std::unordered_map<std::string, MMFile*> files;
 	static std::unordered_map<std::string, std::shared_ptr<Client::Stub>> clientStubs;
+	std::vector<std::shared_ptr<FileServer::Stub>> fileServerStubs;
 	pthread_mutex_t filesLock;
 public:
 	MetadataManagerServiceImpl();

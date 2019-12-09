@@ -35,7 +35,7 @@ PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 
-BINARIES= pfsClient metadataManager
+BINARIES= pfsClient metadataManager fileServer
 
 PROTOS_PATH = protos
 
@@ -56,11 +56,16 @@ PFSCLIENT_FILES = $(wildcard client/*.cpp)
 PFSCLIENT_OBJS = $(PFSCLIENT_FILES:%.cpp=%.o)
 METADATA_MANAGER_FILES = $(wildcard metadata_manager/*.cpp)
 METADATA_MANAGER_OBJS = $(METADATA_MANAGER_FILES:%.cpp=%.o)
+FILE_SERVER_FILES = $(wildcard file_server/*.cpp)
+FILE_SERVER_OBJS = $(FILE_SERVER_FILES:%.cpp=%.o)
 
 pfsClient: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} test1-c1.o
 	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@ 
 	
 metadataManager : ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${METADATA_MANAGER_OBJS} pfs_MM.o
+	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@
+	
+fileServer :  ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${FILE_SERVER_OBJS} pfs_file_server.o
 	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@
 
 #greeter_server: helloworld.pb.o helloworld.grpc.pb.o greeter_server.o

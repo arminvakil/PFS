@@ -38,6 +38,8 @@ class PFSClient {
 	static pthread_t clientServiceThread;
 
 	static std::unique_ptr<Server> client;
+
+	std::vector<std::shared_ptr<FileServer::Stub>> fileServerStubs;
 public:
 
 	static inline PFSClient* getInstance() {

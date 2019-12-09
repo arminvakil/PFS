@@ -8,6 +8,8 @@
 #include <iostream>
 #include "util.h"
 
+const uint64_t pfsBlockSizeInBytes = PFS_BLOCK_SIZE * 1024;
+
 std::string getErrorMessage(int error_code) {
 	if(error_code >= 0)
 		return "";

@@ -12,6 +12,14 @@ std::unordered_map<std::string, std::shared_ptr<Client::Stub>> MetadataManagerSe
 MetadataManagerServiceImpl::MetadataManagerServiceImpl() {
 	// TODO Auto-generated constructor stub
 	pthread_mutex_init(&filesLock, nullptr);
+	for(int i = 0; i < NUM_FILE_SERVERS; i++) {
+		std::string file_server_address("0.0.0.0:3000");
+		file_server_address.push_back(char('0' + i));
+		std::shared_ptr<FileServer::Stub> stub_ =
+				FileServer::NewStub(grpc::CreateChannel(
+						file_server_address, grpc::InsecureChannelCredentials()));
+		fileServerStubs.push_back(stub_);
+	}
 }
 
 MetadataManagerServiceImpl::~MetadataManagerServiceImpl() {
@@ -47,8 +55,27 @@ Status MetadataManagerServiceImpl::CreateFile(ServerContext* context,
 	file->setSize(0);
 	file->setCreationTime(time(0));
 	file->setLastModifiedTime(time(0));
+	file->setStripWidth(request->stripewidth());
 	files[request->name()] = file;
 	pthread_mutex_unlock(&filesLock);
+	for(int i = 0; i < request->stripewidth(); i++) {
+		CreateStripeRequest stripeRequest;
+		stripeRequest.set_id(i);
+		stripeRequest.set_name(request->name());
+		stripeRequest.set_stripewidth(request->stripewidth());
+		// Container for the data we expect from the server.
+		StatusReply reply;
+
+		// Context for the client. It could be used to convey extra information to
+		// the server and/or tweak certain RPC behaviors.
+		ClientContext context;
+
+		// The actual RPC.
+		Status status = fileServerStubs[i % NUM_FILE_SERVERS]->CreateFile(&context, stripeRequest, &reply);
+
+		// Act upon its status.
+		assert(status.ok());
+	}
 	printf("File %s is created by %s\n", request->name().c_str(),
 			context->peer().c_str());
 	return Status::OK;
@@ -80,6 +107,7 @@ Status MetadataManagerServiceImpl::OpenFile(ServerContext* context,
 		reply->set_creationtime(file->getCreationTime());
 		reply->set_lastmodified(file->getLastModifiedTime());
 		reply->set_filesize(file->getSize());
+		reply->set_stripwidth(file->getStripWidth());
 		printf("File %s is opened by %s\n", request->name().c_str(),
 				context->peer().c_str());
 		return Status::OK;

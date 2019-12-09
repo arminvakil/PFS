@@ -34,8 +34,30 @@ service Client {
   rpc RevokePermission	(RevokePermissionRequest)	returns (StatusReply) {}
 }
 
+service FileServer {
+	rpc CreateFile 	(CreateStripeRequest)	returns (StatusReply) {}
+	rpc ReadFile	(ReadFileRequest)		returns (DataReply) {}
+	rpc WriteFile	(WriteFileRequest)		returns (StatusReply) {}
+}
+
 message StatusReply {
 	int32 error = 1;
+}
+
+message ReadFileRequest {
+	string name = 1;
+	int32 start = 2;
+	int32 size = 3;
+}
+
+message WriteFileRequest {
+	string name = 1;
+	int32 start = 2;
+	bytes data = 4;
+}
+
+message DataReply {
+	bytes data = 1;
 }
 
 message ClientStartRequest {
@@ -45,6 +67,12 @@ message ClientStartRequest {
 message CreateFileRequest {
   string name = 1;
   uint32 stripeWidth = 2;
+}
+
+message CreateStripeRequest {
+  string name = 1;
+  uint32 stripeWidth = 2;
+  uint32 id = 3;
 }
 
 message OpenFileRequest {
@@ -82,6 +110,7 @@ message FileStatReply {
 	int64 lastModified = 2; /* time of last data modification */
 	int64 creationTime = 3; /* time of creation */
 	uint64 fileSize = 4;    /* File size in bytes */
+	int32 stripWidth = 5;
 }
 
 message RevokePermissionRequest {

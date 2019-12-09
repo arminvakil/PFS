@@ -9,7 +9,10 @@
 #define INCLUDE_UTIL_H_
 
 #include <iostream>
+#include "cstdint"
+#include "config.h"
 
+extern const uint64_t pfsBlockSizeInBytes;
 
 #define NO_ERROR 0
 #define ERROR_ALREADY_EXISTS -1
