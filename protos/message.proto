@@ -38,10 +38,24 @@ service FileServer {
 	rpc CreateFile 	(CreateStripeRequest)	returns (StatusReply) {}
 	rpc ReadFile	(ReadFileRequest)		returns (DataReply) {}
 	rpc WriteFile	(WriteFileRequest)		returns (StatusReply) {}
+	rpc ReadBlock	(ReadBlockRequest)		returns (DataReply) {}
+	rpc WriteBlock	(WriteBlockRequest)		returns (StatusReply) {}
 }
 
 message StatusReply {
 	int32 error = 1;
+}
+
+message ReadBlockRequest {
+	string name = 1;
+	int32 addr = 2;
+}
+
+message WriteBlockRequest {
+	string name = 1;
+	int32 addr = 2;
+	bytes data = 3;
+	bytes dirty = 4;
 }
 
 message ReadFileRequest {
@@ -53,7 +67,7 @@ message ReadFileRequest {
 message WriteFileRequest {
 	string name = 1;
 	int32 start = 2;
-	bytes data = 4;
+	bytes data = 3;
 }
 
 message DataReply {

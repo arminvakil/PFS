@@ -15,6 +15,8 @@
 #include <vector>
 #include <pthread.h>
 
+#include "cache.h"
+#include "cache_block.h"
 #include "client_file.h"
 #include "client_service.h"
 
@@ -73,9 +75,16 @@ public:
 
 	int getFileStat(int filedes, struct pfs_stat *buf); // Check the config file for the definition of pfs_stat structure
 
+	void flush(CacheBlock* block);
+
+	void getBlockFromFileServer(int fileIndex,
+			uint32_t blockAddr, const char* data);
+
 private:
 	std::shared_ptr<MetadataManager::Stub> stub_;
 	std::shared_ptr<grpc::Channel> channel_;
+
+	Cache* cache;
 };
 
 #endif /* _CLIENT_H_ */

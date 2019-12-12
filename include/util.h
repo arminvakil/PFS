@@ -9,10 +9,14 @@
 #define INCLUDE_UTIL_H_
 
 #include <iostream>
+#include <functional>
 #include "cstdint"
 #include "config.h"
 
-extern const uint64_t pfsBlockSizeInBytes;
+#define pfsBlockSizeInBytes (PFS_BLOCK_SIZE * 1024)
+#define clientCacheSizeInBytes (CLIENT_CACHE_SIZE * 1024 * 1024)
+
+#define HASH_BUCKETS (clientCacheSizeInBytes / pfsBlockSizeInBytes) / 2
 
 #define NO_ERROR 0
 #define ERROR_ALREADY_EXISTS -1
@@ -23,5 +27,7 @@ extern const uint64_t pfsBlockSizeInBytes;
 #define ERROR_GET_PERMISSION_UNOPENED_FILE -6
 
 std::string getErrorMessage(int error_code);
+
+std::size_t hashPFS(uint32_t fdes, uint32_t blockAddr);
 
 #endif /* INCLUDE_UTIL_H_ */

@@ -5,10 +5,7 @@
  *      Author: armin
  */
 
-#include <iostream>
 #include "util.h"
-
-const uint64_t pfsBlockSizeInBytes = PFS_BLOCK_SIZE * 1024;
 
 std::string getErrorMessage(int error_code) {
 	if(error_code >= 0)
@@ -28,4 +25,10 @@ std::string getErrorMessage(int error_code) {
 		return "Error : Getting r/w permission for an unopened file";
 	}
 	return "Error : Unknown Error";
+}
+
+std::size_t hashPFS(uint32_t fdes, uint32_t blockAddr) {
+	std::size_t h1 = std::hash<uint32_t>{}(fdes);
+	std::size_t h2 = std::hash<uint32_t>{}(blockAddr);
+	return h1 ^ (h2 << 1);
 }
