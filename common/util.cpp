@@ -30,5 +30,5 @@ std::string getErrorMessage(int error_code) {
 std::size_t hashPFS(uint32_t fdes, uint32_t blockAddr) {
 	std::size_t h1 = std::hash<uint32_t>{}(fdes);
 	std::size_t h2 = std::hash<uint32_t>{}(blockAddr);
-	return h1 ^ (h2 << 1);
+	return (h1 ^ (h2 << 1)) & HASH_BUCKETS_MASK;
 }

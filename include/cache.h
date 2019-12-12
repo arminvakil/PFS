@@ -53,6 +53,8 @@ public:
 	void addBlock(int fileDes, uint32_t blockAddr, const char* data);
 	void evictBlock(int fileDes, uint32_t blockAddr);
 
+	void evictFile(int fileDes);
+
 	void addToRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock);
 	void removeFromRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock);
 	CacheBlockMetadata* removeRecencyListLRU(bool shouldAcquireLock);
@@ -64,6 +66,9 @@ public:
 	bool addToFreeList(CacheBlockMetadata* node);
 	CacheBlockMetadata* getFreeListEntry();
 	CacheBlockMetadata* lookup(int fileDes, uint32_t blockAddr, bool shouldAcquireLock);
+
+	void printRecencyList(bool shouldAcquireLock);
+	void printDirtyList(bool shouldAcquireLock);
 
 	pthread_mutex_t cacheLock;
 	pthread_mutex_t freeListLock;

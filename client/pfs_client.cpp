@@ -62,10 +62,11 @@ void PFSClient::initialize(int argc, char** argv) {
 }
 
 void PFSClient::finalize() {
-	client->Shutdown();
-	pthread_join(clientServiceThread, nullptr);
 	if(cache)
 		delete cache;
+
+	client->Shutdown();
+	pthread_join(clientServiceThread, nullptr);
 }
 
 void* PFSClient::clientServiceFunc(void* client_no) {
@@ -396,6 +397,8 @@ int PFSClient::closeFile(int filedes) {
 		std::cout << "Trying to close an unopened file\n";
 		return ERROR_CLOSE_UNOPENED_FILE;
 	}
+
+	cache->evictFile(openedFiles[foundAt]->getDescriptor());
 
 	// Container for the data we expect from the server.
 	StatusReply reply;

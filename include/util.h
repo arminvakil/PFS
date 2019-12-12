@@ -17,6 +17,7 @@
 #define clientCacheSizeInBytes (CLIENT_CACHE_SIZE * 1024 * 1024)
 
 #define HASH_BUCKETS (clientCacheSizeInBytes / pfsBlockSizeInBytes) / 2
+#define HASH_BUCKETS_MASK ((HASH_BUCKETS) - 1)
 
 #define NO_ERROR 0
 #define ERROR_ALREADY_EXISTS -1
