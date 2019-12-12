@@ -26,6 +26,7 @@ class FileServerServiceImpl : public FileServer::Service {
 	std::string address;
 	std::string filesDirectory;
 	std::unordered_map<std::string, FSFile*> files;
+	pthread_mutex_t lock;
 public:
 	FileServerServiceImpl(std::string address);
 	virtual ~FileServerServiceImpl();
@@ -40,6 +41,14 @@ public:
 
 	Status WriteFile(ServerContext* context,
 			const ParallelFileSystem::WriteFileRequest* request,
+			ParallelFileSystem::StatusReply* reply) override;
+
+	Status ReadBlock(ServerContext* context,
+			const ParallelFileSystem::ReadBlockRequest* request,
+			ParallelFileSystem::DataReply* reply) override;
+
+	Status WriteBlock(ServerContext* context,
+			const ParallelFileSystem::WriteBlockRequest* request,
 			ParallelFileSystem::StatusReply* reply) override;
 };
 

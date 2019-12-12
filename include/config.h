@@ -9,7 +9,7 @@
 #define NUM_FILE_SERVERS 5
 #define CLIENT_CACHE_SIZE 2 // 2 Megabytes
 
-#define NO_CACHE 1
+#define NO_CACHE 0
 
 struct pfs_stat {
   time_t pst_mtime; /* time of last data modification */

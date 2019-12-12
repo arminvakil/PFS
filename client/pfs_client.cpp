@@ -493,10 +493,9 @@ void PFSClient::getBlockFromFileServer(int fileIndex,
 	int fileServerIndex = ((blockAddr / (STRIP_SIZE * pfsBlockSizeInBytes)) %
 			openedFiles[fileIndex]->getStripWidth()) % NUM_FILE_SERVERS;
 
-	ReadFileRequest request;
+	ReadBlockRequest request;
 	request.set_name(openedFiles[fileIndex]->getName());
-	request.set_start(blockAddr);
-	request.set_size(pfsBlockSizeInBytes);
+	request.set_addr(blockAddr);
 
 	// Container for the data we expect from the server.
 	DataReply reply;
@@ -506,7 +505,7 @@ void PFSClient::getBlockFromFileServer(int fileIndex,
 	ClientContext context;
 
 	// The actual RPC.
-	Status status = fileServerStubs[fileServerIndex]->ReadFile(&context, request, &reply);
+	Status status = fileServerStubs[fileServerIndex]->ReadBlock(&context, request, &reply);
 
 	// Act upon its status.
 	assert(status.ok());

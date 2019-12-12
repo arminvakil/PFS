@@ -63,10 +63,12 @@ int main(int argc, char *argv[]) {
 	//At Client 1
 	//Write the first 200 bytes of data from the input file onto pfs_file
 	err_value = pfs_write(fdes, (void *) buf, end - start, start, &cache_hit);
-	printf("Wrote %d bytes to the file\n", err_value);
+	printf("Wrote %d bytes to the file, cache_hit: %d\n", err_value, cache_hit);
 
 	char* read_buf = new char[end - start];
 	err_value = pfs_read(fdes, (void *) read_buf, end - start, start, &cache_hit);
+
+	printf("Read %d bytes from the file, cache_hit: %d\n", err_value, cache_hit);
 
 	pfs_close(fdes);
 	free(buf);

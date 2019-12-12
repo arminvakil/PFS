@@ -42,6 +42,31 @@ Cache::Cache() {
 }
 
 Cache::~Cache() {
+	while(true) {
+		pthread_mutex_lock(&cacheLock);
+		CacheBlockMetadata* node = removeDirtyListLRU(false);
+		if(node == nullptr) {
+			pthread_mutex_unlock(&cacheLock);
+			break;
+		}
+		// do the real flush for node
+		assert(!(node->block->clean));
+		PFSClient::getInstance()->flush(node->block);
+		pthread_mutex_unlock(&cacheLock);
+		delete node;
+	}
+
+	while(true) {
+		pthread_mutex_lock(&cacheLock);
+		CacheBlockMetadata* node = removeRecencyListLRU(false);
+		if(node == nullptr) {
+			pthread_mutex_unlock(&cacheLock);
+			break;
+		}
+		pthread_mutex_unlock(&cacheLock);
+		delete node;
+	}
+
 	pthread_mutex_lock(&freeListLock);
 	while(freeListHead != nullptr) {
 		CacheBlockMetadata* node = (CacheBlockMetadata*) freeListHead->freeNode->next;
@@ -49,45 +74,56 @@ Cache::~Cache() {
 		freeListHead = node;
 	}
 	pthread_mutex_unlock(&freeListLock);
-	for(int i = 0; i < HASH_BUCKETS; i++) {
-		pthread_mutex_lock(hashTableBucketLocks + i);
-		while(hashTable[i] != nullptr) {
-			CacheBlockMetadata* node = (CacheBlockMetadata*)hashTable[i]->bucketNode->next;
-			delete hashTable[i];
-			hashTable[i] = node;
-		}
-		pthread_mutex_unlock(hashTableBucketLocks + i);
-	}
+
+	delete hashTable;
+	delete hashTableBucketLocks;
+	for(int i = 0; i < blockCount; i++)
+		delete data[i];
+	delete data;
 }
 
 bool Cache::readBlock(int fileDes, uint32_t blockAddr, char* data) {
-	return false;
+	pthread_mutex_lock(&cacheLock);
+	CacheBlockMetadata* node = lookup(fileDes, blockAddr, false);
+	if(node == nullptr) {
+		pthread_mutex_unlock(&cacheLock);
+		return false;
+	}
+	memcpy(data, node->block->data, pfsBlockSizeInBytes);
+	removeFromRecencyList(node, false);
+	addToRecencyList(node, false);
+	pthread_mutex_unlock(&cacheLock);
+	return true;
 }
 
 bool Cache::write(int fileDes, uint32_t offset, uint32_t size, const char* data) {
-	return false;
+	pthread_mutex_lock(&cacheLock);
+	uint32_t blockAddr = offset / pfsBlockSizeInBytes;
+	blockAddr *= pfsBlockSizeInBytes;
+	CacheBlockMetadata* node = lookup(fileDes, blockAddr, false);
+	if(node == nullptr) {
+		pthread_mutex_unlock(&cacheLock);
+		return false;
+	}
+	uint32_t blockOffset = offset % pfsBlockSizeInBytes;
+	memcpy(node->block->data + blockOffset, data, size);
+	for(int i = 0; i < size; i++)
+		node->block->dirty[i + offset] = true;
+	if(node->block->clean)
+		removeFromRecencyList(node, false);
+	else
+		removeFromDirtyList(node, false);
+	node->block->clean = false;
+	addToDirtyList(node, false);
+	pthread_mutex_unlock(&cacheLock);
+	return true;
 }
 
 void Cache::addBlock(int fileDes, uint32_t blockAddr, const char* data) {
 	assert((blockAddr & (pfsBlockSizeInBytes - 1)) == 0);
 	sem_wait(&freeBlockSemaphore);
-	pthread_mutex_lock(&freeListLock);
-	CacheBlockMetadata* node = freeListHead;
-	pthread_mutex_lock(&(node->lock));
-	assert(node != nullptr);
-	CacheBlockMetadata* nx = (CacheBlockMetadata*)(node->freeNode->next);
-	nx->freeNode->prev = nullptr;
-	freeListHead = nx;
 
-	if(freeBlockCount == blockCount) {
-		pthread_mutex_lock(&recencyListLock);
-		LRUNode = node;
-		pthread_mutex_unlock(&recencyListLock);
-	}
-	freeBlockCount--;
-	if(freeBlockCount <= 50)
-		sem_post(&harvesterSemaphore);
-	pthread_mutex_unlock(&freeListLock);
+	CacheBlockMetadata* node = getFreeListEntry();
 
 	node->block->reset();
 	node->block->valid = true;
@@ -96,156 +132,47 @@ void Cache::addBlock(int fileDes, uint32_t blockAddr, const char* data) {
 	memcpy(node->block->data, data, pfsBlockSizeInBytes);
 	uint32_t bucket = hashPFS(fileDes, blockAddr);
 	node->bucketId = bucket;
-	pthread_mutex_lock(hashTableBucketLocks + bucket);
-	if(hashTable[bucket])
-		pthread_mutex_lock(&(hashTable[bucket]->lock));
-	node->bucketNode->next = hashTable[bucket];
-	if(hashTable[bucket]) {
-		hashTable[bucket]->bucketNode->prev = node;
-		pthread_mutex_unlock(&(hashTable[bucket]->lock));
-	}
-	hashTable[bucket] = node;
-	pthread_mutex_unlock(hashTableBucketLocks + bucket);
-
-	pthread_mutex_lock(&recencyListLock);
-	if(MRUNode) {
-		pthread_mutex_lock(&(MRUNode->lock));
-	}
-	node->recencyNode->next = MRUNode;
-	if(MRUNode) {
-		MRUNode->recencyNode->prev = node;
-		pthread_mutex_unlock(&(MRUNode->lock));
-	}
-	MRUNode = node;
-	pthread_mutex_unlock(&recencyListLock);
-	pthread_mutex_unlock(&(node->lock));
+	pthread_mutex_lock(&cacheLock);
+	addToHashmap(node, false);
+	addToRecencyList(node, false);
+	pthread_mutex_unlock(&cacheLock);
 }
 
 void Cache::evictBlock(int fileDes, uint32_t blockAddr) {
+	pthread_mutex_lock(&cacheLock);
+	CacheBlockMetadata* node = lookup(fileDes, blockAddr, false);
+	if(node == nullptr) {
+		pthread_mutex_unlock(&cacheLock);
+		return;
+	}
+	removeFromHashmap(node, false);
+	if(node->block->clean)
+		removeFromRecencyList(node, false);
+	else
+		removeFromDirtyList(node, false);
+	node->reset();
+	pthread_mutex_unlock(&cacheLock);
+	addToFreeList(node);
+	return;
+}
+
+CacheBlockMetadata* Cache::lookup(int fileDes, uint32_t blockAddr, bool shouldAcquireLock) {
 	uint32_t bucket = hashPFS(fileDes, blockAddr);
-	pthread_mutex_lock(hashTableBucketLocks + bucket);
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* bucketPrev = nullptr;
 	CacheBlockMetadata* node = hashTable[bucket];
-	pthread_mutex_lock(&(node->lock));
-	CacheBlockMetadata* bucketNext = (CacheBlockMetadata*)hashTable[bucket]->bucketNode->next;
-	if(bucketNext == nullptr) {
-		if(!(node->block->fdes == fileDes && node->block->addr == blockAddr)) {
-			pthread_mutex_unlock(&(node->lock));
-			pthread_mutex_unlock(hashTableBucketLocks + bucket);
-			return;
-		}
-	}
-	else {
-		pthread_mutex_lock(&(bucketNext->lock));
-	}
 	while(node != nullptr) {
-		// if we are here, we have lock of all prev, node, and next, if exist
 		if(node->block->fdes == fileDes && node->block->addr == blockAddr) {
-			if(bucketPrev) {
-				bucketPrev->bucketNode->next = bucketNext;
-			}
-			if(bucketNext) {
-				bucketNext->bucketNode->prev = bucketPrev;
-			}
-			node->bucketNode->resetNode();
-			if(bucketNext)
-				pthread_mutex_unlock(&(bucketNext->lock));
-			if(bucketPrev)
-				pthread_mutex_unlock(&(bucketPrev->lock));
-			break;
+			if(shouldAcquireLock)
+				pthread_mutex_unlock(&cacheLock);
+			return node;
 		}
-		if(bucketPrev)
-			pthread_mutex_unlock(&(bucketPrev->lock));
-		bucketPrev = node;
-		node = bucketNext;
-		bucketNext = (CacheBlockMetadata*)bucketNext->bucketNode->next;
-		if(bucketNext)
-			pthread_mutex_lock(&(bucketNext->lock));
+		node = (CacheBlockMetadata*)node->bucketNode->next;
 	}
-	// Here, we only have lock for node and we have found the node
-	if(node != nullptr) {
-		// should evict the node
-		if(node->block->clean) {
-			pthread_mutex_lock(&recencyListLock);
-			assert(MRUNode != nullptr);
-			assert(LRUNode != nullptr);
-			if(MRUNode == LRUNode) {
-				assert(MRUNode == node);
-				MRUNode = LRUNode = nullptr;
-				node->reset();
-			}
-			else {
-				CacheBlockMetadata* recencyPrev = (CacheBlockMetadata*)node->recencyNode->prev;
-				CacheBlockMetadata* recencyNext = (CacheBlockMetadata*)node->recencyNode->next;
-				if(recencyPrev != nullptr)
-					pthread_mutex_lock(&(recencyPrev->lock));
-				if(recencyNext != nullptr)
-					pthread_mutex_lock(&(recencyNext->lock));
-				if(recencyPrev)
-					recencyPrev->recencyNode->next = recencyNext;
-				if(recencyNext)
-					recencyNext->recencyNode->prev = recencyPrev;
-				if(MRUNode == node)
-					MRUNode = recencyNext;
-				else if(LRUNode == node)
-					LRUNode = recencyPrev;
-				if(recencyNext != nullptr)
-					pthread_mutex_unlock(&(recencyNext->lock));
-				if(recencyPrev != nullptr)
-					pthread_mutex_unlock(&(recencyPrev->lock));
-			}
-			pthread_mutex_unlock(&recencyListLock);
-		}
-		else {
-			// block is dirty
-			pthread_mutex_lock(&dirtyListLock);
-			assert(dirtyListMRU != nullptr);
-			assert(dirtyListLRU != nullptr);
-			if(dirtyListMRU == dirtyListLRU) {
-				assert(dirtyListMRU == node);
-				dirtyListMRU = dirtyListLRU = nullptr;
-				node->reset();
-			}
-			else {
-				CacheBlockMetadata* dirtyPrev = (CacheBlockMetadata*)node->dirtyNode->prev;
-				CacheBlockMetadata* dirtyNext = (CacheBlockMetadata*)node->dirtyNode->next;
-				if(dirtyPrev != nullptr)
-					pthread_mutex_lock(&(dirtyPrev->lock));
-				if(dirtyNext != nullptr)
-					pthread_mutex_lock(&(dirtyNext->lock));
-				if(dirtyPrev)
-					dirtyPrev->dirtyNode->next = dirtyNext;
-				if(dirtyNext)
-					dirtyNext->dirtyNode->prev = dirtyPrev;
-				if(dirtyListMRU == node)
-					dirtyListMRU = dirtyNext;
-				else if(dirtyListLRU == node)
-					dirtyListLRU = dirtyPrev;
-				if(dirtyNext != nullptr)
-					pthread_mutex_unlock(&(dirtyNext->lock));
-				if(dirtyPrev != nullptr)
-					pthread_mutex_unlock(&(dirtyPrev->lock));
-			}
-			pthread_mutex_unlock(&dirtyListLock);
-		}
-	}
-	pthread_mutex_unlock(hashTableBucketLocks + bucket);
-	if(!(node->block->clean))
-		PFSClient::getInstance()->flush(node->block);
-	// should add the node to the free list
-	pthread_mutex_lock(&freeListLock);
-	if(freeListHead != nullptr) {
-		pthread_mutex_lock(&(freeListHead->lock));
-		freeListHead->freeNode->prev = node;
-		node->freeNode->next = freeListHead;
-		pthread_mutex_unlock(&(freeListHead->lock));
-	}
-	else {
-		node->freeNode->resetNode();
-	}
-	freeListHead = node;
-	freeBlockCount++;
-	pthread_mutex_unlock(&freeListLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
+	return nullptr;
 }
 
 void* cacheHarvester(void* data) {
@@ -257,127 +184,21 @@ void* cacheHarvester(void* data) {
 		cont = (cache->freeBlockCount < 100);
 		pthread_mutex_unlock(&(cache->freeListLock));
 		while(cont) {
-			pthread_mutex_lock(&(cache->recencyListLock));
-			CacheBlockMetadata* node = cache->LRUNode;
+			pthread_mutex_lock(&(cache->cacheLock));
+			CacheBlockMetadata* node = cache->removeRecencyListLRU(false);
 			if(node == nullptr) {
-				pthread_mutex_unlock(&(cache->recencyListLock));
-				pthread_mutex_lock(&(cache->dirtyListLock));
-				assert(cache->dirtyListLRU != nullptr);
-				node = cache->dirtyListLRU;
-				pthread_mutex_lock(&(node->lock));
+				node = cache->removeDirtyListLRU(false);
 				assert(!(node->block->clean));
 				assert(node->block->valid);
-				CacheBlockMetadata* dirtyPrev = (CacheBlockMetadata*)node->dirtyNode->prev;
-				assert(dirtyPrev != nullptr);
-				CacheBlockMetadata* dirtyNext = (CacheBlockMetadata*)node->dirtyNode->next;
-				assert(dirtyNext == nullptr);
-				pthread_mutex_lock(&(dirtyPrev->lock));
-				cache->dirtyListLRU = dirtyPrev;
-				pthread_mutex_unlock(&(cache->dirtyListLock));
-				dirtyPrev->next = dirtyNext;
-				pthread_mutex_unlock(&(dirtyPrev->lock));
-				node->dirtyNode->resetNode();
-				// Removing this node from hashmap table
-				uint32_t bucket = node->bucketId;
-				pthread_mutex_lock(cache->hashTableBucketLocks + bucket);
-				CacheBlockMetadata* bucketPrev = (CacheBlockMetadata*)cache->hashTable[bucket]->bucketNode->prev;
-				CacheBlockMetadata* bucketNext = (CacheBlockMetadata*)cache->hashTable[bucket]->bucketNode->next;
-				if(bucketPrev == nullptr && bucketNext == nullptr) {
-					assert(cache->hashTable[bucket] == node);
-					cache->hashTable[bucket] = nullptr;
-					pthread_mutex_unlock(cache->hashTableBucketLocks + bucket);
-				}
-				else {
-					if(bucketPrev)
-						pthread_mutex_lock(&(bucketPrev->lock));
-					if(bucketNext)
-						pthread_mutex_lock(&(bucketNext->lock));
-					pthread_mutex_unlock(cache->hashTableBucketLocks + bucket);
-					if(bucketPrev) {
-						bucketPrev->next = bucketNext;
-					}
-					if(bucketNext) {
-						bucketNext->prev = bucketPrev;
-					}
-					if(bucketNext)
-						pthread_mutex_unlock(&(bucketNext->lock));
-					if(bucketPrev)
-						pthread_mutex_unlock(&(bucketPrev->lock));
-					node->bucketNode->resetNode();
-				}
-				// Now, This node is not in any list.
-				pthread_mutex_unlock(&(node->lock));
 			}
-			else {
-				pthread_mutex_lock(&(node->lock));
-				assert(node->block->clean);
-				assert(node->block->valid);
-				if(cache->LRUNode == cache->MRUNode) {
-					node->recencyNode->resetNode();
-					cache->LRUNode = cache->MRUNode = nullptr;
-					pthread_mutex_unlock(&(cache->recencyListLock));
-				}
-				else {
-					CacheBlockMetadata* recencyPrev = (CacheBlockMetadata*)node->recencyNode->prev;
-					assert(recencyPrev != nullptr);
-					CacheBlockMetadata* recencyNext = (CacheBlockMetadata*)node->recencyNode->next;
-					assert(recencyNext == nullptr);
-					pthread_mutex_lock(&(recencyPrev->lock));
-					cache->LRUNode = recencyPrev;
-					pthread_mutex_unlock(&(cache->recencyListLock));
-					recencyPrev->recencyNode->next = recencyNext;
-					pthread_mutex_unlock(&(recencyPrev->lock));
-					node->recencyNode->resetNode();
-				}
-				// Removing this node from hashmap table
-				uint32_t bucket = node->bucketId;
-				pthread_mutex_lock(cache->hashTableBucketLocks + bucket);
-				CacheBlockMetadata* bucketPrev = (CacheBlockMetadata*)cache->hashTable[bucket]->bucketNode->prev;
-				CacheBlockMetadata* bucketNext = (CacheBlockMetadata*)cache->hashTable[bucket]->bucketNode->next;
-				if(bucketPrev == nullptr && bucketNext == nullptr) {
-					assert(cache->hashTable[bucket] == node);
-					cache->hashTable[bucket] = nullptr;
-					pthread_mutex_unlock(cache->hashTableBucketLocks + bucket);
-				}
-				else {
-					if(bucketPrev)
-						pthread_mutex_lock(&(bucketPrev->lock));
-					if(bucketNext)
-						pthread_mutex_lock(&(bucketNext->lock));
-					pthread_mutex_unlock(cache->hashTableBucketLocks + bucket);
-					if(bucketPrev) {
-						bucketPrev->next = bucketNext;
-					}
-					if(bucketNext) {
-						bucketNext->prev = bucketPrev;
-					}
-					if(bucketNext)
-						pthread_mutex_unlock(&(bucketNext->lock));
-					if(bucketPrev)
-						pthread_mutex_unlock(&(bucketPrev->lock));
-					node->bucketNode->resetNode();
-				}
-				// Now, This node is not in any list.
-				pthread_mutex_unlock(&(node->lock));
-			}
+			// Removing this node from hashmap table
+			cache->removeFromHashmap(node, false);
+			// Now, This node is not in any list.
 			if(!(node->block->clean)) {
 				PFSClient::getInstance()->flush(node->block);
 			}
-			pthread_mutex_lock(&(cache->freeListLock));
-			if(cache->freeListHead != nullptr) {
-				pthread_mutex_lock(&(cache->freeListHead->lock));
-				cache->freeListHead->freeNode->prev = node;
-				node->freeNode->next = cache->freeListHead;
-				pthread_mutex_unlock(&(cache->freeListHead->lock));
-			}
-			else {
-				node->freeNode->resetNode();
-			}
-			cache->freeListHead = node;
-			cache->freeBlockCount++;
-			if(cache->freeBlockCount >= 100)
-				cont = false;
-			pthread_mutex_unlock(&(cache->freeListLock));
+			pthread_mutex_unlock(&(cache->cacheLock));
+			cont = cache->addToFreeList(node);
 		}
 	}
 }
@@ -387,52 +208,26 @@ void* cacheFlusher(void* data) {
 	while(true) {
 		sleep(30);
 		while(true) {
-			pthread_mutex_lock(&(cache->dirtyListLock));
-			CacheBlockMetadata* node = cache->dirtyListLRU;
+			pthread_mutex_lock(&(cache->cacheLock));
+			CacheBlockMetadata* node = cache->removeDirtyListLRU(false);
 			if(node == nullptr) {
-				pthread_mutex_unlock(&(cache->dirtyListLock));
+				pthread_mutex_unlock(&(cache->cacheLock));
 				break;
-			}
-			pthread_mutex_lock(&(node->lock));
-			if(node == cache->dirtyListMRU) {
-				cache->dirtyListLRU = cache->dirtyListMRU = nullptr;
-				pthread_mutex_unlock(&(cache->dirtyListLock));
-			}
-			else {
-				CacheBlockMetadata* dirtyNext = (CacheBlockMetadata*)node->dirtyNode->next;
-				CacheBlockMetadata* dirtyPrev = (CacheBlockMetadata*)node->dirtyNode->prev;
-				assert(dirtyNext == nullptr);
-				assert(dirtyPrev != nullptr);
-				pthread_mutex_lock(&(dirtyPrev->lock));
-				cache->dirtyListLRU = dirtyPrev;
-				pthread_mutex_unlock(&(cache->dirtyListLock));
-				dirtyPrev->next = dirtyNext;
-				pthread_mutex_unlock(&(dirtyPrev->lock));
-				node->dirtyNode->resetNode();
 			}
 			// do the real flush for node
 			assert(!(node->block->clean));
 			PFSClient::getInstance()->flush(node->block);
 			// adding to the clean list
-			pthread_mutex_lock(&(cache->recencyListLock));
-			if(cache->MRUNode) {
-				pthread_mutex_lock(&(cache->MRUNode->lock));
-			}
-			node->recencyNode->next = cache->MRUNode;
-			if(cache->MRUNode) {
-				cache->MRUNode->recencyNode->prev = node;
-				pthread_mutex_unlock(&(cache->MRUNode->lock));
-			}
-			cache->MRUNode = node;
-			pthread_mutex_unlock(&(cache->recencyListLock));
-			pthread_mutex_unlock(&(node->lock));
+			cache->addToRecencyList(node, false);
+			pthread_mutex_unlock(&(cache->cacheLock));
 		}
 	}
 	return nullptr;
 }
 
-void Cache::addToRecencyList(CacheBlockMetadata* node) {
-	pthread_mutex_lock(&cacheLock);
+void Cache::addToRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* nodeNext = MRUNode;
 	MRUNode = node;
 	if(LRUNode == nullptr)
@@ -441,14 +236,17 @@ void Cache::addToRecencyList(CacheBlockMetadata* node) {
 	if(nodeNext) {
 		nodeNext->recencyNode->prev = node;
 	}
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 }
 
-void Cache::removeFromRecencyList(CacheBlockMetadata* node) {
-	pthread_mutex_lock(&cacheLock);
+void Cache::removeFromRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	if(node == MRUNode && node == LRUNode) {
 		MRUNode = LRUNode = nullptr;
-		pthread_mutex_unlock(&cacheLock);
+		if(shouldAcquireLock)
+			pthread_mutex_unlock(&cacheLock);
 		return;
 	}
 	CacheBlockMetadata* recencyPrev = (CacheBlockMetadata*)node->recencyNode->prev;
@@ -460,14 +258,17 @@ void Cache::removeFromRecencyList(CacheBlockMetadata* node) {
 	if(recencyNext)
 		recencyNext->recencyNode->prev = recencyPrev;
 	node->recencyNode->resetNode();
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 }
 
-CacheBlockMetadata* Cache::removeRecencyListLRU() {
-	pthread_mutex_lock(&cacheLock);
+CacheBlockMetadata* Cache::removeRecencyListLRU(bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* node = LRUNode;
 	if(node == nullptr) {
-		pthread_mutex_unlock(&cacheLock);
+		if(shouldAcquireLock)
+			pthread_mutex_unlock(&cacheLock);
 		return node;
 	}
 	if(LRUNode == MRUNode) {
@@ -481,15 +282,16 @@ CacheBlockMetadata* Cache::removeRecencyListLRU() {
 		assert(recencyNext == nullptr);
 		LRUNode = recencyPrev;
 		recencyPrev->recencyNode->next = recencyNext;
-		pthread_mutex_unlock(&(recencyPrev->lock));
 		node->recencyNode->resetNode();
 	}
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 	return node;
 }
 
-void Cache::addToDirtyList(CacheBlockMetadata* node) {
-	pthread_mutex_lock(&cacheLock);
+void Cache::addToDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* nodeNext = dirtyListMRU;
 	dirtyListMRU = node;
 	if(dirtyListLRU == nullptr)
@@ -498,14 +300,17 @@ void Cache::addToDirtyList(CacheBlockMetadata* node) {
 	if(nodeNext) {
 		nodeNext->dirtyNode->prev = node;
 	}
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 }
 
-void Cache::removeFromDirtyList(CacheBlockMetadata* node) {
-	pthread_mutex_lock(&cacheLock);
+void Cache::removeFromDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	if(node == dirtyListMRU && node == dirtyListLRU) {
 		dirtyListMRU = dirtyListLRU = nullptr;
-		pthread_mutex_unlock(&cacheLock);
+		if(shouldAcquireLock)
+			pthread_mutex_unlock(&cacheLock);
 		return;
 	}
 	CacheBlockMetadata* dirtyPrev = (CacheBlockMetadata*)node->dirtyNode->prev;
@@ -517,14 +322,17 @@ void Cache::removeFromDirtyList(CacheBlockMetadata* node) {
 	if(dirtyNext)
 		dirtyNext->dirtyNode->prev = dirtyPrev;
 	node->dirtyNode->resetNode();
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 }
 
-CacheBlockMetadata* Cache::removeDirtyListLRU() {
-	pthread_mutex_lock(&cacheLock);
+CacheBlockMetadata* Cache::removeDirtyListLRU(bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* node = dirtyListLRU;
 	if(node == nullptr) {
-		pthread_mutex_unlock(&cacheLock);
+		if(shouldAcquireLock)
+			pthread_mutex_unlock(&cacheLock);
 		return node;
 	}
 	if(dirtyListLRU == dirtyListMRU) {
@@ -540,23 +348,27 @@ CacheBlockMetadata* Cache::removeDirtyListLRU() {
 		dirtyPrev->dirtyNode->next = dirtyNext;
 		node->dirtyNode->resetNode();
 	}
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 	return node;
 }
 
-void Cache::addToHashmap(CacheBlockMetadata* node) {
-	pthread_mutex_lock(&cacheLock);
+void Cache::addToHashmap(CacheBlockMetadata* node, bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* nodeNext = hashTable[node->bucketId];
 	hashTable[node->bucketId] = node;
 	node->bucketNode->next = nodeNext;
 	if(nodeNext) {
 		nodeNext->bucketNode->prev = node;
 	}
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 }
 
-void Cache::removeFromHashmap(CacheBlockMetadata* node) {
-	pthread_mutex_lock(&cacheLock);
+void Cache::removeFromHashmap(CacheBlockMetadata* node, bool shouldAcquireLock) {
+	if(shouldAcquireLock)
+		pthread_mutex_lock(&cacheLock);
 	CacheBlockMetadata* bucketPrev = (CacheBlockMetadata*)node->bucketNode->prev;
 	CacheBlockMetadata* bucketNext = (CacheBlockMetadata*)node->bucketNode->next;
 	if(node == hashTable[node->bucketId])
@@ -566,7 +378,8 @@ void Cache::removeFromHashmap(CacheBlockMetadata* node) {
 	if(bucketNext)
 		bucketNext->bucketNode->prev = bucketPrev;
 	node->bucketNode->resetNode();
-	pthread_mutex_unlock(&cacheLock);
+	if(shouldAcquireLock)
+		pthread_mutex_unlock(&cacheLock);
 }
 
 bool Cache::addToFreeList(CacheBlockMetadata* node) {
@@ -577,6 +390,7 @@ bool Cache::addToFreeList(CacheBlockMetadata* node) {
 	if(nodeNext) {
 		nodeNext->freeNode->prev = node;
 	}
+	freeBlockCount++;
 	bool res = freeBlockCount < 100;
 	pthread_mutex_unlock(&freeListLock);
 	return res;
