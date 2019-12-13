@@ -72,8 +72,6 @@ int main(int argc, char *argv[]) {
 	for(int i = 0; i < end - start; i++)
 		std::cerr << int(read_buf[i]) << " ";
 	std::cerr << "\n";
-	sleep(10);
-	std::cerr << "after sleep\n";
 
 	pfs_close(fdes);
 	free(buf);

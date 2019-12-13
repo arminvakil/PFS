@@ -304,7 +304,6 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 			offset = blockAddr + pfsBlockSizeInBytes;
 		}
 	}
-	sleep(5);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, false);
 	return nbyteBackup;
 }
@@ -386,7 +385,6 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 			offset = blockAddr + pfsBlockSizeInBytes;
 		}
 	}
-	sleep(5);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, true);
 	return nbyteBackup;
 }
