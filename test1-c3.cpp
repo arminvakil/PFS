@@ -68,5 +68,6 @@ int main(int argc, char *argv[])
   pfs_delete("pfs_file1");
   free(buf);
   close(ifdes);
+  finalize();
   return 0;
 }

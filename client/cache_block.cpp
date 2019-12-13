@@ -19,3 +19,8 @@ void CacheBlock::reset() {
 bool CacheBlock::isDirty() {
 	return !clean;
 }
+
+void CacheBlock::resetDirty() {
+	memset(dirty, 0, pfsBlockSizeInBytes);
+	clean = true;
+}

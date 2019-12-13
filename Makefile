@@ -35,7 +35,7 @@ PROTOC = protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 
-BINARIES= pfsClient metadataManager fileServer
+BINARIES= pfsClient metadataManager fileServer testClient1 testClient2 testClient3
 
 PROTOS_PATH = protos
 
@@ -59,7 +59,16 @@ METADATA_MANAGER_OBJS = $(METADATA_MANAGER_FILES:%.cpp=%.o)
 FILE_SERVER_FILES = $(wildcard file_server/*.cpp)
 FILE_SERVER_OBJS = $(FILE_SERVER_FILES:%.cpp=%.o)
 
-pfsClient: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} test1-c1.o
+pfsClient: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} pfs-client.o
+	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@ 
+	
+testClient1: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} test1-c1.o
+	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@ 
+	
+testClient2: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} test1-c2.o
+	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@ 
+	
+testClient3: ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${PFSCLIENT_OBJS} test1-c3.o
 	$(CXX) $^ $(LDFLAGS) ${INCLUDE_FLAGS} -o $@ 
 	
 metadataManager : ${PROTOS_OBJS} ${GRPC_PROTOS_OBJS} ${COMMON_OBJS} ${METADATA_MANAGER_OBJS} pfs_MM.o

@@ -23,6 +23,8 @@ public:
 	std::vector<Permission*> permissions;
 	pthread_mutex_t lock;
 
+	bool hasModified;
+
 	File();
 	virtual ~File();
 

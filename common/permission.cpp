@@ -28,11 +28,17 @@ bool Permission::isInclusiveShared(uint32_t s, uint32_t e) {
 }
 
 void Permission::lock() {
+	pthread_mutex_lock(&waitingSemaphoresLock);
+	locked = true;
+	pthread_mutex_unlock(&waitingSemaphoresLock);
 	pthread_mutex_lock(&permitLock);
 }
 
 void Permission::unlock() {
 	pthread_mutex_unlock(&permitLock);
+	pthread_mutex_lock(&waitingSemaphoresLock);
+	locked = false;
 	for(int i = 0; i < waitingSemaphores.size(); i++)
 		sem_post(waitingSemaphores[i]);
+	pthread_mutex_unlock(&waitingSemaphoresLock);
 }

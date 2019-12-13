@@ -12,6 +12,7 @@
 #include <iostream>
 #include <sys/types.h>
 #include <unistd.h>
+#include "config.h"
 
 void initialize(int argc, char** argv);
 

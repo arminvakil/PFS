@@ -11,6 +11,7 @@
 
 File::File() {
 	// TODO Auto-generated constructor stub
+	hasModified = false;
 }
 
 File::~File() {
@@ -221,8 +222,8 @@ void File::revokePermission(uint32_t start, uint32_t end, bool write,
 		int count = 0;
 		for(int i = 0; i < permissions.size(); i++)
 			if(permissions[i]->isShared(start, end)) {
-				permissions[i]->addWaitingSemaphore(&sem);
-				count++;
+				bool res = permissions[i]->addWaitingSemaphore(&sem);
+				count += res;
 			}
 		pthread_mutex_unlock(lock);
 		for(int i = 0; i < count; i++)

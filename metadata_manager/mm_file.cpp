@@ -90,6 +90,8 @@ Permission* MMFile::waitAndGetPermissionFor(std::string peer,
 		std::vector<pthread_t*> threads;
 		bool firstPermit = true;
 		for(auto strToPermits : clientPermissions) {
+			if(strToPermits.first == peer)
+				continue;
 			for(auto permit : *(strToPermits.second)) {
 				firstPermit = false;
 				if((permit->isWrite() || iswrite) && permit->isShared(start, end)) {

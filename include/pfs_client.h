@@ -78,7 +78,7 @@ public:
 	void flush(CacheBlock* block);
 
 	void getBlockFromFileServer(int fileIndex,
-			uint32_t blockAddr, const char* data);
+			uint32_t blockAddr, char* data);
 
 private:
 	std::shared_ptr<MetadataManager::Stub> stub_;

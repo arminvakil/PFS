@@ -17,6 +17,7 @@ public:
 	void reset();
 
 	bool isDirty();
+	void resetDirty();
 };
 
 #endif /* CLIENT_CACHE_BLOCK_H_ */

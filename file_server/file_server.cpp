@@ -10,9 +10,8 @@
 #include <string>
 
 FileServerServiceImpl::FileServerServiceImpl(std::string address) : address(address) {
-	filesDirectory = "file_server_";
+	filesDirectory = "pfs_";
 	filesDirectory.append(address);
-	filesDirectory.append("_files");
 	std::string removeCommand("rm -r ");
 	std::string mkdirCommand("mkdir -p ");
 	removeCommand.append(filesDirectory);
@@ -67,7 +66,7 @@ Status FileServerServiceImpl::ReadFile(ServerContext* context,
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
 	std::string stripPath = file->getStripPath(strip);
-	printf("Read file request for %s from %d to %d\n", stripPath.c_str(),
+	printf("Read request from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
 			request->start(), request->start() + request->size());
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
@@ -83,7 +82,11 @@ Status FileServerServiceImpl::ReadFile(ServerContext* context,
 		printf("Reading from uncreated file %s\n", request->name().c_str());
 		return Status::CANCELLED;
 	}
-	fseek(fdes, request->start(), SEEK_SET);
+	uint32_t stripeIndex = request->start() / (pfsBlockSizeInBytes * STRIP_SIZE);
+	uint32_t fileOffset = ((stripeIndex - stripeIndex % file->getStripWidth()) / file->getStripWidth()) *
+			(file->getStripWidth() - 1) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fileOffset += (stripeIndex % file->getStripWidth()) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fseek(fdes, request->start() - fileOffset, SEEK_SET);
 	char* data = new char[request->size()];
 	fread(data, sizeof(char), request->size(), fdes);
 	fclose(fdes);
@@ -111,7 +114,7 @@ Status FileServerServiceImpl::WriteFile(ServerContext* context,
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
 	std::string stripPath = file->getStripPath(strip);
-	printf("Write file request for %s from %d to %d\n", stripPath.c_str(),
+	printf("Write request from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
 			request->start(), request->start() + int(request->data().size()));
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
@@ -124,7 +127,11 @@ Status FileServerServiceImpl::WriteFile(ServerContext* context,
 		return Status::CANCELLED;
 	}
 	FILE* fdes = fopen(stripPath.c_str(), "rb+");
-	fseek(fdes, request->start(), SEEK_SET);
+	uint32_t stripeIndex = request->start() / (pfsBlockSizeInBytes * STRIP_SIZE);
+	uint32_t fileOffset = ((stripeIndex - stripeIndex % file->getStripWidth()) / file->getStripWidth()) *
+			(file->getStripWidth() - 1) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fileOffset += (stripeIndex % file->getStripWidth()) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fseek(fdes, request->start() - fileOffset, SEEK_SET);
 	fwrite(request->data().c_str(), sizeof(char), request->data().size(), fdes);
 	fclose(fdes);
 	return Status::OK;
@@ -147,7 +154,7 @@ Status FileServerServiceImpl::ReadBlock(ServerContext* context,
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
 	std::string stripPath = file->getStripPath(strip);
-	printf("Read block request for %s from %d to %d\n", stripPath.c_str(),
+	printf("Read block from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
 			request->addr(), request->addr() + pfsBlockSizeInBytes);
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
@@ -163,7 +170,11 @@ Status FileServerServiceImpl::ReadBlock(ServerContext* context,
 		printf("Reading from uncreated file %s\n", request->name().c_str());
 		return Status::CANCELLED;
 	}
-	fseek(fdes, request->addr(), SEEK_SET);
+	uint32_t stripeIndex = request->addr() / (pfsBlockSizeInBytes * STRIP_SIZE);
+	uint32_t fileOffset = ((stripeIndex - stripeIndex % file->getStripWidth()) / file->getStripWidth()) *
+			(file->getStripWidth() - 1) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fileOffset += (stripeIndex % file->getStripWidth()) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fseek(fdes, request->addr() - fileOffset, SEEK_SET);
 	char* data = new char[pfsBlockSizeInBytes];
 	fread(data, sizeof(char), pfsBlockSizeInBytes, fdes);
 	fclose(fdes);
@@ -191,7 +202,7 @@ Status FileServerServiceImpl::WriteBlock(ServerContext* context,
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
 	std::string stripPath = file->getStripPath(strip);
-	printf("Write block request for %s from %d to %d\n", stripPath.c_str(),
+	printf("Write block from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
 			request->addr(), request->addr() + pfsBlockSizeInBytes);
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
@@ -204,7 +215,11 @@ Status FileServerServiceImpl::WriteBlock(ServerContext* context,
 		return Status::CANCELLED;
 	}
 	FILE* fdes = fopen(stripPath.c_str(), "rb+");
-	fseek(fdes, request->addr(), SEEK_SET);
+	uint32_t stripeIndex = request->addr() / (pfsBlockSizeInBytes * STRIP_SIZE);
+	uint32_t fileOffset = ((stripeIndex - stripeIndex % file->getStripWidth()) / file->getStripWidth()) *
+			(file->getStripWidth() - 1) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fileOffset += (stripeIndex % file->getStripWidth()) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	fseek(fdes, request->addr() - fileOffset, SEEK_SET);
 	for(int i = 0; i < pfsBlockSizeInBytes; i++)
 		if(request->dirty()[i]) {
 			fwrite(request->data().c_str() + i, sizeof(char), 1, fdes);

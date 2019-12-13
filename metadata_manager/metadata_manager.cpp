@@ -126,6 +126,10 @@ Status MetadataManagerServiceImpl::CloseFile(ServerContext* context,
 	}
 	MMFile* file = it->second;
 	pthread_mutex_unlock(&filesLock);
+	if(request->hasmodified()) {
+		file->setLastModifiedTime(time(0));
+		file->setSize(std::max(request->size(), file->getSize()));
+	}
 	if(!file->close(context->peer())) {
 		printf("File %s is closed by %s while it was not opened before\n",
 				request->name().c_str(), context->peer().c_str());
@@ -233,4 +237,23 @@ pthread_t* MetadataManagerServiceImpl::sendRevokePermissionRequest(
 	pthread_create(th, nullptr, &revokePermit, (void*)data);
 
 	return th;
+}
+
+Status MetadataManagerServiceImpl::GetFileDesc(ServerContext* context,
+		const ParallelFileSystem::GetFileDescRequest* request,
+		ParallelFileSystem::FileStatReply* reply) {
+	pthread_mutex_lock(&filesLock);
+	auto it = files.find(request->name());
+	if(it == files.end()) {
+		pthread_mutex_unlock(&filesLock);
+		printf("File %s doesn't exist to get file stat\n", request->name().c_str());
+		reply->set_error(ERROR_DOES_NOT_EXIST);
+		return Status::CANCELLED;
+	}
+	MMFile* file = it->second;
+	pthread_mutex_unlock(&filesLock);
+	reply->set_creationtime(file->getCreationTime());
+	reply->set_lastmodified(file->getLastModifiedTime());
+	reply->set_filesize(file->getSize());
+	return Status::OK;
 }

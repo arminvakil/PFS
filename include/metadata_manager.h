@@ -63,6 +63,10 @@ public:
 			const ParallelFileSystem::PermissionRequest* request,
 			ParallelFileSystem::PermissionReply* reply) override;
 
+	Status GetFileDesc(ServerContext* context,
+			const ParallelFileSystem::GetFileDescRequest* request,
+			ParallelFileSystem::FileStatReply* reply) override;
+
 	static pthread_t* sendRevokePermissionRequest(std::string peer, std::string filename,
 			uint32_t start, uint32_t end, bool write);
 };

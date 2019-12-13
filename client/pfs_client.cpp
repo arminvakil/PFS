@@ -162,7 +162,6 @@ int PFSClient::acquirePermission(int filedes, off_t start, off_t end, bool write
 	int foundAt = -1;
 	PermissionRequest request;
 	for(int i = 0; i < openedFiles.size(); i++) {
-		std::cerr << __func__ << " " << i << " " << openedFiles[i]->getDescriptor() << "\n";
 		if(openedFiles[i]->getDescriptor() == filedes) {
 			request.set_name(openedFiles[i]->getName());
 			foundAt = i;
@@ -195,8 +194,6 @@ int PFSClient::acquirePermission(int filedes, off_t start, off_t end, bool write
 
 	// Act upon its status.
 	if (status.ok()) {
-		std::cerr << "have got permission for : " << reply.start() << " " <<
-				reply.end() << " " << write << "\n";
 		openedFiles[foundAt]->addPermission(reply.start(), reply.end(), write,
 				&openedFiles[foundAt]->lock, openedFiles[foundAt]->permissions,
 				true);
@@ -221,9 +218,20 @@ void PFSClient::revokePermission(std::string filename, uint32_t start,
 		std::cout << "MetadataManager tries to get revoke permission of an unopened file\n";
 		return;
 	}
+	std::cerr << "Trying to revoke " << start << " " << end << "\n";
 	ClientFile* file = openedFiles[foundAt];
 	file->revokePermission(start, end, write, &(file->lock), file->permissions);
-	file->printPermissions(file->permissions);
+	std::cerr << "Revoke permission is done\n";
+	if(cache) {
+		uint32_t blockAddr = start / pfsBlockSizeInBytes;
+		blockAddr *= pfsBlockSizeInBytes;
+		while(blockAddr <= end) {
+			cache->evictBlock(openedFiles[foundAt]->getDescriptor(), blockAddr);
+			blockAddr += pfsBlockSizeInBytes;
+		}
+	}
+	std::cerr << "Revoke is done, flushed to file server\n";
+//	file->printPermissions(file->permissions);
 }
 
 ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
@@ -241,19 +249,15 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 
 	ssize_t nbyteBackup = nbyte;
 	off_t offsetBackup = offset;
-
 	char* data = (char*)buf;
 	if(cache == nullptr) {
-
+		*cache_hit = 0;
 		while(nbyte > 0) {
 			int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
 					openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
 			uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
 			lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
 			lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
-
-			std::cerr << "sending request to : " << fileServerIndex << " " <<
-					offset << " " << std::min(lastByteInFileServer - offset, nbyte) << "\n";
 
 			ReadFileRequest request;
 			request.set_name(openedFiles[foundAt]->getName());
@@ -281,12 +285,15 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 		}
 	}
 	else {
+		*cache_hit = 1;
 		while(nbyte > 0) {
 			uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
 			char cacheData[pfsBlockSizeInBytes];
 			bool hit = cache->readBlock(filedes, blockAddr, cacheData);
+			std::cerr << blockAddr << " " << hit << "\n";
 			if(!hit) {
+				*cache_hit = 0;
 				getBlockFromFileServer(foundAt, blockAddr, cacheData);
 				cache->addBlock(filedes, blockAddr, cacheData);
 			}
@@ -297,8 +304,9 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 			offset = blockAddr + pfsBlockSizeInBytes;
 		}
 	}
+	sleep(5);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, false);
-	return nbyte;
+	return nbyteBackup;
 }
 
 ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
@@ -314,11 +322,15 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 		return foundAt;
 	}
 
+	openedFiles[foundAt]->hasModified = true;
+	openedFiles[foundAt]->setSize(std::max(openedFiles[foundAt]->getSize(),
+			(uint32_t)(offset + nbyte)));
+
 	size_t nbyteBackup = nbyte;
 	off_t offsetBackup = offset;
 	char* data = (char*)(buf);
 	if(cache == nullptr) {
-
+		*cache_hit = 0;
 		while(nbyte > 0) {
 			int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
 					openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
@@ -326,8 +338,6 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 			lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
 			lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
 
-			std::cerr << "sending request to : " << fileServerIndex << " " <<
-					offset << " " << std::min(lastByteInFileServer - offset, (ssize_t)nbyte) << "\n";
 
 			WriteFileRequest request;
 			request.set_name(openedFiles[foundAt]->getName());
@@ -353,6 +363,7 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 		}
 	}
 	else {
+		*cache_hit = 1;
 		while(nbyte > 0) {
 			uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
@@ -361,6 +372,7 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 					std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte),
 					data);
 			if(!hit) {
+				*cache_hit = 0;
 				char cacheData[pfsBlockSizeInBytes];
 				getBlockFromFileServer(foundAt, blockAddr, cacheData);
 				cache->addBlock(filedes, blockAddr, cacheData);
@@ -374,6 +386,7 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 			offset = blockAddr + pfsBlockSizeInBytes;
 		}
 	}
+	sleep(5);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, true);
 	return nbyteBackup;
 }
@@ -386,7 +399,6 @@ int PFSClient::closeFile(int filedes) {
 	CloseFileRequest request;
 	bool foundAt = -1;
 	for(int i = 0; i < openedFiles.size(); i++) {
-		std::cerr << __func__ << " " << i << " " << openedFiles[i]->getDescriptor() << "\n";
 		if(openedFiles[i]->getDescriptor() == filedes) {
 			request.set_name(openedFiles[i]->getName());
 			foundAt = i;
@@ -398,7 +410,19 @@ int PFSClient::closeFile(int filedes) {
 		return ERROR_CLOSE_UNOPENED_FILE;
 	}
 
-	cache->evictFile(openedFiles[foundAt]->getDescriptor());
+	if(cache) {
+		for(int i = 0; i < openedFiles[foundAt]->permissions.size(); i++) {
+			uint32_t blockAddr = openedFiles[foundAt]->permissions[i]->getStart() /
+					pfsBlockSizeInBytes;
+			blockAddr *= pfsBlockSizeInBytes;
+			while(blockAddr <= openedFiles[foundAt]->permissions[i]->getEnd()) {
+				cache->evictBlock(openedFiles[foundAt]->getDescriptor(), blockAddr);
+				blockAddr += pfsBlockSizeInBytes;
+			}
+		}
+	}
+	request.set_hasmodified(openedFiles[foundAt]->hasModified);
+	request.set_size(openedFiles[foundAt]->getSize());
 
 	// Container for the data we expect from the server.
 	StatusReply reply;
@@ -451,7 +475,45 @@ int PFSClient::deleteFile(const char *filename) {
 }
 
 int PFSClient::getFileStat(int filedes, struct pfs_stat *buf) {
-	return -1;
+	if(stub_ == nullptr) {
+		std::cerr << "stub_ is not created, please call initialize first\n";
+		return -1;
+	}
+	GetFileDescRequest request;
+	bool foundAt = -1;
+	for(int i = 0; i < openedFiles.size(); i++) {
+		if(openedFiles[i]->getDescriptor() == filedes) {
+			request.set_name(openedFiles[i]->getName());
+			foundAt = i;
+			break;
+		}
+	}
+	if(foundAt == -1) {
+		std::cout << "Trying to close an unopened file\n";
+		return ERROR_CLOSE_UNOPENED_FILE;
+	}
+
+	// Container for the data we expect from the server.
+	FileStatReply reply;
+
+	// Context for the client. It could be used to convey extra information to
+	// the server and/or tweak certain RPC behaviors.
+	ClientContext context;
+
+	// The actual RPC.
+	Status status = stub_->GetFileDesc(&context, request, &reply);
+
+	// Act upon its status.
+	if (status.ok()) {
+		buf->pst_ctime = reply.creationtime();
+		buf->pst_mtime = reply.lastmodified();
+		buf->pst_size = reply.filesize();
+		return 0;
+	} else {
+		std::cout << status.error_code() << ": " << status.error_message()
+											<< std::endl;
+		return -1 * abs(status.error_code());
+	}
 }
 
 void PFSClient::flush(CacheBlock* block) {
@@ -459,7 +521,6 @@ void PFSClient::flush(CacheBlock* block) {
 	int foundAt = -1;
 	WriteBlockRequest request;
 	for(int i = 0; i < openedFiles.size(); i++) {
-		std::cerr << __func__ << " " << i << " " << openedFiles[i]->getDescriptor() << "\n";
 		if(openedFiles[i]->getDescriptor() == block->fdes) {
 			request.set_name(openedFiles[i]->getName());
 			foundAt = i;
@@ -469,12 +530,10 @@ void PFSClient::flush(CacheBlock* block) {
 	assert(foundAt != -1);
 	int fileServerIndex = ((block->addr / (STRIP_SIZE * pfsBlockSizeInBytes)) %
 			openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
-	std::cerr << "sending block to : " << fileServerIndex << " " <<
-			block->addr << "\n";
 
 	request.set_addr(block->addr);
-	request.set_data(block->data, PFS_BLOCK_SIZE);
-	request.set_dirty(block->dirty, PFS_BLOCK_SIZE);
+	request.set_data(block->data, pfsBlockSizeInBytes);
+	request.set_dirty(block->dirty, pfsBlockSizeInBytes);
 
 	// Container for the data we expect from the server.
 	StatusReply reply;
@@ -491,7 +550,7 @@ void PFSClient::flush(CacheBlock* block) {
 }
 
 void PFSClient::getBlockFromFileServer(int fileIndex,
-		uint32_t blockAddr, const char* data) {
+		uint32_t blockAddr, char* data) {
 
 	int fileServerIndex = ((blockAddr / (STRIP_SIZE * pfsBlockSizeInBytes)) %
 			openedFiles[fileIndex]->getStripWidth()) % NUM_FILE_SERVERS;
@@ -512,4 +571,6 @@ void PFSClient::getBlockFromFileServer(int fileIndex,
 
 	// Act upon its status.
 	assert(status.ok());
+	assert(reply.data().size() == pfsBlockSizeInBytes);
+	memcpy(data, reply.data().c_str(), pfsBlockSizeInBytes);
 }

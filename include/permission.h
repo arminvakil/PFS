@@ -17,11 +17,15 @@ class Permission {
 	bool write;
 	uint32_t start, end;
 	pthread_mutex_t permitLock;
+	pthread_mutex_t waitingSemaphoresLock;
+	bool locked;
 	std::vector<sem_t*> waitingSemaphores;
 public:
 	Permission(uint32_t start, uint32_t end, bool write) :
 		start(start), end(end), write(write) {
 		pthread_mutex_init(&permitLock, nullptr);
+		pthread_mutex_init(&waitingSemaphoresLock, nullptr);
+		locked = false;
 	}
 	virtual ~Permission();
 
@@ -49,8 +53,15 @@ public:
 		this->write = write;
 	}
 
-	void addWaitingSemaphore(sem_t* sem) {
-		waitingSemaphores.push_back(sem);
+	bool addWaitingSemaphore(sem_t* sem) {
+		pthread_mutex_lock(&waitingSemaphoresLock);
+		if(locked) {
+			waitingSemaphores.push_back(sem);
+			pthread_mutex_unlock(&waitingSemaphoresLock);
+			return true;
+		}
+		pthread_mutex_unlock(&waitingSemaphoresLock);
+		return false;
 	}
 
 	bool isShared(uint32_t s, uint32_t e);

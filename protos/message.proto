@@ -109,6 +109,8 @@ message PermissionReply {
 
 message CloseFileRequest {
 	string name = 1;
+	bool hasModified = 2;
+	uint32 size = 3;
 }
 
 message DeleteFileRequest {

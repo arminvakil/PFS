@@ -56,16 +56,16 @@ Cache::~Cache() {
 		delete node;
 	}
 
-	while(true) {
-		pthread_mutex_lock(&cacheLock);
-		CacheBlockMetadata* node = removeRecencyListLRU(false);
-		if(node == nullptr) {
-			pthread_mutex_unlock(&cacheLock);
-			break;
-		}
-		pthread_mutex_unlock(&cacheLock);
-		delete node;
-	}
+//	while(true) {
+//		pthread_mutex_lock(&cacheLock);
+//		CacheBlockMetadata* node = removeRecencyListLRU(false);
+//		if(node == nullptr) {
+//			pthread_mutex_unlock(&cacheLock);
+//			break;
+//		}
+//		pthread_mutex_unlock(&cacheLock);
+//		delete node;
+//	}
 
 //	pthread_mutex_lock(&freeListLock);
 //	while(freeListHead != nullptr) {
@@ -98,7 +98,6 @@ bool Cache::readBlock(int fileDes, uint32_t blockAddr, char* data) {
 
 bool Cache::write(int fileDes, uint32_t offset, uint32_t size, const char* data) {
 	pthread_mutex_lock(&cacheLock);
-	std::cerr << "write to " << offset << "\n";
 	uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 	blockAddr *= pfsBlockSizeInBytes;
 	CacheBlockMetadata* node = lookup(fileDes, blockAddr, false);
@@ -123,7 +122,6 @@ bool Cache::write(int fileDes, uint32_t offset, uint32_t size, const char* data)
 void Cache::addBlock(int fileDes, uint32_t blockAddr, const char* data) {
 	assert((blockAddr & (pfsBlockSizeInBytes - 1)) == 0);
 	sem_wait(&freeBlockSemaphore);
-	std::cerr << "adding block " << blockAddr << "\n";
 
 	CacheBlockMetadata* node = getFreeListEntry();
 
@@ -147,11 +145,15 @@ void Cache::evictBlock(int fileDes, uint32_t blockAddr) {
 		pthread_mutex_unlock(&cacheLock);
 		return;
 	}
+//	std::cerr << "evicting block : " << fileDes << " " << blockAddr << "\n";
 	removeFromHashmap(node, false);
 	if(node->block->clean)
 		removeFromRecencyList(node, false);
-	else
+	else {
+		PFSClient::getInstance()->flush(node->block);
+		node->block->resetDirty();
 		removeFromDirtyList(node, false);
+	}
 	node->reset();
 	pthread_mutex_unlock(&cacheLock);
 	addToFreeList(node);
@@ -165,6 +167,7 @@ void Cache::evictFile(int fileDes) {
 		if(node->block->fdes == fileDes) {
 			CacheBlockMetadata* dirtyNext = (CacheBlockMetadata*)node->dirtyNode->next;
 			PFSClient::getInstance()->flush(node->block);
+			node->block->resetDirty();
 			removeFromDirtyList(node, false);
 			// adding to the free list
 			addToFreeList(node);
@@ -228,6 +231,7 @@ void* cacheHarvester(void* data) {
 			// Now, This node is not in any list.
 			if(!(node->block->clean)) {
 				PFSClient::getInstance()->flush(node->block);
+				node->block->resetDirty();
 			}
 			pthread_mutex_unlock(&(cache->cacheLock));
 			cont = cache->addToFreeList(node);
@@ -249,6 +253,7 @@ void* cacheFlusher(void* data) {
 			// do the real flush for node
 			assert(!(node->block->clean));
 			PFSClient::getInstance()->flush(node->block);
+			node->block->resetDirty();
 			// adding to the clean list
 			cache->addToRecencyList(node, false);
 			pthread_mutex_unlock(&(cache->cacheLock));
@@ -260,8 +265,6 @@ void* cacheFlusher(void* data) {
 void Cache::addToRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 	if(shouldAcquireLock)
 		pthread_mutex_lock(&cacheLock);
-	std::cerr << "adding " << (int*)node << " " << node->block->addr << " to recency list\n";
-	printRecencyList(shouldAcquireLock);
 	CacheBlockMetadata* nodeNext = MRUNode;
 	MRUNode = node;
 	if(LRUNode == nullptr)
@@ -270,8 +273,6 @@ void Cache::addToRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 	if(nodeNext) {
 		nodeNext->recencyNode->prev = node;
 	}
-	printRecencyList(shouldAcquireLock);
-	std::cerr << "\n";
 	if(shouldAcquireLock)
 		pthread_mutex_unlock(&cacheLock);
 }
@@ -279,10 +280,7 @@ void Cache::addToRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 void Cache::removeFromRecencyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 	if(shouldAcquireLock)
 		pthread_mutex_lock(&cacheLock);
-	std::cerr << "removing " << (int*) node << " " << node->block->addr << " from recency list\n";
-	printRecencyList(false);
 	if(node == MRUNode && node == LRUNode) {
-		std::cerr << "recency list will become empty\n";
 		MRUNode = LRUNode = nullptr;
 		if(shouldAcquireLock)
 			pthread_mutex_unlock(&cacheLock);
@@ -298,8 +296,6 @@ void Cache::removeFromRecencyList(CacheBlockMetadata* node, bool shouldAcquireLo
 		recencyNext->recencyNode->prev = recencyPrev;
 	}
 	node->recencyNode->resetNode();
-	printRecencyList(false);
-	std::cerr << "\n";
 	if(shouldAcquireLock)
 		pthread_mutex_unlock(&cacheLock);
 }
@@ -334,8 +330,6 @@ CacheBlockMetadata* Cache::removeRecencyListLRU(bool shouldAcquireLock) {
 void Cache::addToDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 	if(shouldAcquireLock)
 		pthread_mutex_lock(&cacheLock);
-	std::cerr << "adding " << (int*) node << " " << node->block->addr << " to dirty list\n";
-	printDirtyList(false);
 	CacheBlockMetadata* nodeNext = dirtyListMRU;
 	dirtyListMRU = node;
 	if(dirtyListLRU == nullptr)
@@ -344,8 +338,6 @@ void Cache::addToDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 	if(nodeNext) {
 		nodeNext->dirtyNode->prev = node;
 	}
-	printDirtyList(false);
-	std::cerr << "\n";
 	if(shouldAcquireLock)
 		pthread_mutex_unlock(&cacheLock);
 }
@@ -353,8 +345,6 @@ void Cache::addToDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 void Cache::removeFromDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock) {
 	if(shouldAcquireLock)
 		pthread_mutex_lock(&cacheLock);
-	std::cerr << "removing " << (int*) node << " " << node->block->addr << " from dirty list\n";
-	printDirtyList(false);
 	if(node == dirtyListMRU && node == dirtyListLRU) {
 		dirtyListMRU = dirtyListLRU = nullptr;
 		if(shouldAcquireLock)
@@ -370,8 +360,6 @@ void Cache::removeFromDirtyList(CacheBlockMetadata* node, bool shouldAcquireLock
 	if(dirtyNext)
 		dirtyNext->dirtyNode->prev = dirtyPrev;
 	node->dirtyNode->resetNode();
-	printDirtyList(false);
-	std::cerr << "\n";
 	if(shouldAcquireLock)
 		pthread_mutex_unlock(&cacheLock);
 }

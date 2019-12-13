@@ -54,5 +54,6 @@ int main(int argc, char *argv[])
   pfs_close(fdes);
   free(buf);
   close(ifdes);
+  finalize();
   return 0;
 }
