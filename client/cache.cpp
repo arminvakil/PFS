@@ -106,6 +106,7 @@ bool Cache::write(int fileDes, uint32_t offset, uint32_t size, const char* data)
 		return false;
 	}
 	uint32_t blockOffset = offset % pfsBlockSizeInBytes;
+//	std::cerr << "writing to " << blockAddr << " cache block from " << blockOffset << " " << size << "\n";
 	memcpy(node->block->data + blockOffset, data, size);
 	for(int i = 0; i < size; i++)
 		node->block->dirty[i + blockOffset] = true;

@@ -218,10 +218,10 @@ void PFSClient::revokePermission(std::string filename, uint32_t start,
 		std::cout << "MetadataManager tries to get revoke permission of an unopened file\n";
 		return;
 	}
-	std::cerr << "Trying to revoke " << start << " " << end << "\n";
+//	std::cerr << "Trying to revoke " << start << " " << end << "\n";
 	ClientFile* file = openedFiles[foundAt];
 	file->revokePermission(start, end, write, &(file->lock), file->permissions);
-	std::cerr << "Revoke permission is done\n";
+//	std::cerr << "Revoke permission is done\n";
 	if(cache) {
 		uint32_t blockAddr = start / pfsBlockSizeInBytes;
 		blockAddr *= pfsBlockSizeInBytes;
@@ -230,7 +230,7 @@ void PFSClient::revokePermission(std::string filename, uint32_t start,
 			blockAddr += pfsBlockSizeInBytes;
 		}
 	}
-	std::cerr << "Revoke is done, flushed to file server\n";
+//	std::cerr << "Revoke is done, flushed to file server\n";
 //	file->printPermissions(file->permissions);
 }
 
@@ -246,7 +246,7 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 		// error
 		return foundAt;
 	}
-
+//	std::cerr << "read permission acquired\n";
 	ssize_t nbyteBackup = nbyte;
 	off_t offsetBackup = offset;
 	char* data = (char*)buf;
@@ -289,21 +289,24 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 		while(nbyte > 0) {
 			uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
-			char cacheData[pfsBlockSizeInBytes];
+			char* cacheData = new char[pfsBlockSizeInBytes];
 			bool hit = cache->readBlock(filedes, blockAddr, cacheData);
-			std::cerr << blockAddr << " " << hit << "\n";
+			uint32_t actualSize = std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), nbyte);
+//			std::cerr << "Read : " << offset << " " << nbyte << " " << blockAddr << " " << hit << " " <<
+//					actualSize << "\n";
 			if(!hit) {
 				*cache_hit = 0;
 				getBlockFromFileServer(foundAt, blockAddr, cacheData);
 				cache->addBlock(filedes, blockAddr, cacheData);
 			}
-			memcpy(data, cacheData + (offset % pfsBlockSizeInBytes),
-					std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), nbyte));
-			data += std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), nbyte);
-			nbyte -= std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), nbyte);
-			offset = blockAddr + pfsBlockSizeInBytes;
+			memcpy(data, cacheData + (offset % pfsBlockSizeInBytes), actualSize);
+			data += actualSize;
+			offset += actualSize;
+			nbyte -= actualSize;
+			delete cacheData;
 		}
 	}
+//	sleep(10);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, false);
 	return nbyteBackup;
 }
@@ -320,7 +323,7 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 		// error
 		return foundAt;
 	}
-
+//	std::cerr << "write permission acquired\n";
 	openedFiles[foundAt]->hasModified = true;
 	openedFiles[foundAt]->setSize(std::max(openedFiles[foundAt]->getSize(),
 			(uint32_t)(offset + nbyte)));
@@ -367,24 +370,24 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 			uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
 
-			bool hit = cache->write(filedes, offset,
-					std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte),
-					data);
+			uint32_t actualSize = std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte);
+			bool hit = cache->write(filedes, offset, actualSize, data);
+//			std::cerr << "Write: " << offset << " " << nbyte << " " << blockAddr << " " << hit << " " <<
+//					actualSize << "\n";
 			if(!hit) {
 				*cache_hit = 0;
-				char cacheData[pfsBlockSizeInBytes];
+				char* cacheData = new char[pfsBlockSizeInBytes];
 				getBlockFromFileServer(foundAt, blockAddr, cacheData);
 				cache->addBlock(filedes, blockAddr, cacheData);
-				cache->write(filedes, offset,
-						std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte),
-						data);
+				delete cacheData;
+				cache->write(filedes, offset, actualSize, data);
 			}
-
-			data += std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte);
-			nbyte -= std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte);
-			offset = blockAddr + pfsBlockSizeInBytes;
+			data += actualSize;
+			nbyte -= actualSize;
+			offset += actualSize;
 		}
 	}
+//	sleep(10);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, true);
 	return nbyteBackup;
 }
@@ -571,4 +574,8 @@ void PFSClient::getBlockFromFileServer(int fileIndex,
 	assert(status.ok());
 	assert(reply.data().size() == pfsBlockSizeInBytes);
 	memcpy(data, reply.data().c_str(), pfsBlockSizeInBytes);
+//	printf("Got data from server for %d\n", blockAddr);
+//	for(int i = 0; i < pfsBlockSizeInBytes; i++)
+//		printf("%d ", int(data[i]));
+//	printf("\n");
 }

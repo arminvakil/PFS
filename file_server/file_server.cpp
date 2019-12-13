@@ -154,8 +154,6 @@ Status FileServerServiceImpl::ReadBlock(ServerContext* context,
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
 	std::string stripPath = file->getStripPath(strip);
-	printf("Read block from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
-			request->addr(), request->addr() + pfsBlockSizeInBytes);
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
 		return Status::CANCELLED;
@@ -174,6 +172,9 @@ Status FileServerServiceImpl::ReadBlock(ServerContext* context,
 	uint32_t fileOffset = ((stripeIndex - stripeIndex % file->getStripWidth()) / file->getStripWidth()) *
 			(file->getStripWidth() - 1) * (pfsBlockSizeInBytes * STRIP_SIZE);
 	fileOffset += (stripeIndex % file->getStripWidth()) * (pfsBlockSizeInBytes * STRIP_SIZE);
+	printf("Read block from %s for %s from %d to %d, actual read: %d to %d\n", context->peer().c_str(), stripPath.c_str(),
+				request->addr(), request->addr() + pfsBlockSizeInBytes,
+				request->addr() - fileOffset, request->addr() - fileOffset + pfsBlockSizeInBytes);
 	fseek(fdes, request->addr() - fileOffset, SEEK_SET);
 	char* data = new char[pfsBlockSizeInBytes];
 	fread(data, sizeof(char), pfsBlockSizeInBytes, fdes);
@@ -202,8 +203,7 @@ Status FileServerServiceImpl::WriteBlock(ServerContext* context,
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
 	std::string stripPath = file->getStripPath(strip);
-	printf("Write block from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
-			request->addr(), request->addr() + pfsBlockSizeInBytes);
+
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
 		return Status::CANCELLED;
@@ -219,14 +219,22 @@ Status FileServerServiceImpl::WriteBlock(ServerContext* context,
 	uint32_t fileOffset = ((stripeIndex - stripeIndex % file->getStripWidth()) / file->getStripWidth()) *
 			(file->getStripWidth() - 1) * (pfsBlockSizeInBytes * STRIP_SIZE);
 	fileOffset += (stripeIndex % file->getStripWidth()) * (pfsBlockSizeInBytes * STRIP_SIZE);
+
+	printf("Write block from %s for %s from %d to %d, actual write %d to %d: \n", context->peer().c_str(), stripPath.c_str(),
+				request->addr(), request->addr() + pfsBlockSizeInBytes,
+				request->addr() - fileOffset, request->addr() - fileOffset + pfsBlockSizeInBytes);
+
 	fseek(fdes, request->addr() - fileOffset, SEEK_SET);
-	for(int i = 0; i < pfsBlockSizeInBytes; i++)
+	for(int i = 0; i < pfsBlockSizeInBytes; i++) {
+//		printf("%s %d %d %d %d\n", context->peer().c_str(), request->addr() - fileOffset,
+//				i, request->dirty()[i], int(request->data().c_str()[i]));
 		if(request->dirty()[i]) {
 			fwrite(request->data().c_str() + i, sizeof(char), 1, fdes);
 		}
 		else {
-			fseek(fdes, 1, SEEK_SET);
+			fseek(fdes, 1, SEEK_CUR);
 		}
+	}
 	fclose(fdes);
 	return Status::OK;
 }
