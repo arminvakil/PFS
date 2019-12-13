@@ -37,8 +37,8 @@ int main(int argc, char *argv[]) {
 
 	strcpy(input_fname, argv[1]);
 	ifdes = open(input_fname, O_RDONLY);
-	buf = (char *) malloc(30 * ONEKB);
-	for(int i = 0; i < 30 * ONEKB; i++)
+	buf = (char *) malloc(end);
+	for(int i = 0; i < end; i++)
 		buf[i] = atoi(argv[5]);
 //	nread = pread(ifdes, (void *) buf, 4 * ONEKB, 0);
 
