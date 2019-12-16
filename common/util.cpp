@@ -27,8 +27,17 @@ std::string getErrorMessage(int error_code) {
 	return "Error : Unknown Error";
 }
 
+unsigned int Hash_UInt_M3(unsigned int key)
+{
+	key ^= (key << 13);
+	key ^= (key >> 17);
+	key ^= (key << 5);
+	return key;
+}
+
 std::size_t hashPFS(uint32_t fdes, uint32_t blockAddr) {
-	std::size_t h1 = std::hash<uint32_t>{}(fdes);
-	std::size_t h2 = std::hash<uint32_t>{}(blockAddr);
-	return (h1 ^ (h2 << 1)) & HASH_BUCKETS_MASK;
+
+	std::size_t h1 = Hash_UInt_M3(fdes);
+	std::size_t h2 = Hash_UInt_M3(blockAddr);
+	return (h1 ^ h2) & HASH_BUCKETS_MASK;
 }

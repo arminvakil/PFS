@@ -9,7 +9,6 @@
 #define INCLUDE_UTIL_H_
 
 #include <iostream>
-#include <functional>
 #include "cstdint"
 #include "config.h"
 
