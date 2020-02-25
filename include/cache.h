@@ -15,6 +15,10 @@
 #include "util.h"
 
 class Cache {
+	static Cache* instance_;
+
+	Cache();
+	virtual ~Cache();
 public:
 	CacheBlock** data;
 	int blockCount;
@@ -37,14 +41,17 @@ public:
 	pthread_t harvesterThread;
 	pthread_t flusherThread;
 
-	static Cache* instance_;
-	Cache();
-	virtual ~Cache();
 
 	static Cache* getInstance() {
 		if(instance_ == nullptr)
 			return (instance_ = new Cache());
 		return instance_;
+	}
+
+	static void removeInstance() {
+		if(instance_)
+			delete instance_;
+		instance_ = nullptr;
 	}
 
 	bool readBlock(int fileDes, uint32_t blockAddr, char* data);

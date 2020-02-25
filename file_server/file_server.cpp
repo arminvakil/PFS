@@ -65,9 +65,9 @@ Status FileServerServiceImpl::ReadFile(ServerContext* context,
 	int maxSize = (request->start() + STRIP_SIZE * pfsBlockSizeInBytes) /
 			(STRIP_SIZE * pfsBlockSizeInBytes);
 	maxSize *= (STRIP_SIZE * pfsBlockSizeInBytes);
-	std::string stripPath = file->getStripPath(strip);
-	printf("Read request from %s for %s from %d to %d\n", context->peer().c_str(), stripPath.c_str(),
+	printf("Read request from %s from %d to %d\n", context->peer().c_str(),
 			request->start(), request->start() + request->size());
+	std::string stripPath = file->getStripPath(strip);
 	if(stripPath.size() == 0) {
 		printf("Incorrect server recieved the request for this strip\n");
 		return Status::CANCELLED;

@@ -83,8 +83,6 @@ public:
 private:
 	std::shared_ptr<MetadataManager::Stub> stub_;
 	std::shared_ptr<grpc::Channel> channel_;
-
-	Cache* cache;
 };
 
 #endif /* _CLIENT_H_ */

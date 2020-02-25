@@ -16,7 +16,6 @@ std::unique_ptr<Server> PFSClient::client = nullptr;
 
 PFSClient::PFSClient() {
 	stub_ = nullptr;
-	cache = nullptr;
 }
 
 PFSClient::~PFSClient() {
@@ -55,15 +54,10 @@ void PFSClient::initialize(int argc, char** argv) {
 	// Act upon its status.
 	assert(status.ok());
 
-	if(NO_CACHE != 1) {
-		// by default with cache, if an argument is given, no cache
-		cache = new Cache();
-	}
 }
 
 void PFSClient::finalize() {
-	if(cache)
-		delete cache;
+	Cache::removeInstance();
 
 	client->Shutdown();
 	pthread_join(clientServiceThread, nullptr);
@@ -222,14 +216,12 @@ void PFSClient::revokePermission(std::string filename, uint32_t start,
 	ClientFile* file = openedFiles[foundAt];
 	file->revokePermission(start, end, write, &(file->lock), file->permissions);
 //	std::cerr << "Revoke permission is done\n";
-	if(cache) {
 		uint32_t blockAddr = start / pfsBlockSizeInBytes;
 		blockAddr *= pfsBlockSizeInBytes;
 		while(blockAddr <= end) {
-			cache->evictBlock(openedFiles[foundAt]->getDescriptor(), blockAddr);
+			Cache::getInstance()->evictBlock(openedFiles[foundAt]->getDescriptor(), blockAddr);
 			blockAddr += pfsBlockSizeInBytes;
 		}
-	}
 //	std::cerr << "Revoke is done, flushed to file server\n";
 //	file->printPermissions(file->permissions);
 }
@@ -250,54 +242,54 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 	ssize_t nbyteBackup = nbyte;
 	off_t offsetBackup = offset;
 	char* data = (char*)buf;
-	if(cache == nullptr) {
-		*cache_hit = 0;
-		while(nbyte > 0) {
-			int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
-					openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
-			uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
-			lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
-			lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
-
-			ReadFileRequest request;
-			request.set_name(openedFiles[foundAt]->getName());
-			request.set_start(offset);
-			request.set_size(std::min(lastByteInFileServer - offset, nbyte));
-
-			// Container for the data we expect from the server.
-			DataReply reply;
-
-			// Context for the client. It could be used to convey extra information to
-			// the server and/or tweak certain RPC behaviors.
-			ClientContext context;
-
-			// The actual RPC.
-			Status status = fileServerStubs[fileServerIndex]->ReadFile(&context, request, &reply);
-
-			// Act upon its status.
-			assert(status.ok());
-			assert(reply.data().size() == request.size());
-			memcpy(data, reply.data().c_str(), request.size());
-
-			data += std::min(lastByteInFileServer - offset, nbyte);
-			nbyte -= std::min(lastByteInFileServer - offset, nbyte);
-			offset = lastByteInFileServer;
-		}
-	}
-	else {
+//	if(cache == nullptr) {
+//		*cache_hit = 0;
+//		while(nbyte > 0) {
+//			int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
+//					openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
+//			uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
+//			lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
+//			lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
+//
+//			ReadFileRequest request;
+//			request.set_name(openedFiles[foundAt]->getName());
+//			request.set_start(offset);
+//			request.set_size(std::min(lastByteInFileServer - offset, nbyte));
+//
+//			// Container for the data we expect from the server.
+//			DataReply reply;
+//
+//			// Context for the client. It could be used to convey extra information to
+//			// the server and/or tweak certain RPC behaviors.
+//			ClientContext context;
+//
+//			// The actual RPC.
+//			Status status = fileServerStubs[fileServerIndex]->ReadFile(&context, request, &reply);
+//
+//			// Act upon its status.
+//			assert(status.ok());
+//			assert(reply.data().size() == request.size());
+//			memcpy(data, reply.data().c_str(), request.size());
+//
+//			data += std::min(lastByteInFileServer - offset, nbyte);
+//			nbyte -= std::min(lastByteInFileServer - offset, nbyte);
+//			offset = lastByteInFileServer;
+//		}
+//	}
+//	else {
 		*cache_hit = 1;
 		while(nbyte > 0) {
 			uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
 			char* cacheData = new char[pfsBlockSizeInBytes];
-			bool hit = cache->readBlock(filedes, blockAddr, cacheData);
+			bool hit = Cache::getInstance()->readBlock(filedes, blockAddr, cacheData);
 			uint32_t actualSize = std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), nbyte);
 //			std::cerr << "Read : " << offset << " " << nbyte << " " << blockAddr << " " << hit << " " <<
 //					actualSize << "\n";
 			if(!hit) {
 				*cache_hit = 0;
 				getBlockFromFileServer(foundAt, blockAddr, cacheData);
-				cache->addBlock(filedes, blockAddr, cacheData);
+				Cache::getInstance()->addBlock(filedes, blockAddr, cacheData);
 			}
 			memcpy(data, cacheData + (offset % pfsBlockSizeInBytes), actualSize);
 			data += actualSize;
@@ -305,7 +297,7 @@ ssize_t PFSClient::readFile(int filedes, void *buf, ssize_t nbyte, off_t offset,
 			nbyte -= actualSize;
 			delete cacheData;
 		}
-	}
+//	}
 //	sleep(10);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, false);
 	return nbyteBackup;
@@ -331,62 +323,62 @@ ssize_t PFSClient::writeFile(int filedes, const void *buf, size_t nbyte,
 	size_t nbyteBackup = nbyte;
 	off_t offsetBackup = offset;
 	char* data = (char*)(buf);
-	if(cache == nullptr) {
-		*cache_hit = 0;
-		while(nbyte > 0) {
-			int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
-					openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
-			uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
-			lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
-			lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
-
-
-			WriteFileRequest request;
-			request.set_name(openedFiles[foundAt]->getName());
-			request.set_start(offset);
-			request.set_data(data, std::min(lastByteInFileServer - offset, (ssize_t)nbyte));
-
-			// Container for the data we expect from the server.
-			StatusReply reply;
-
-			// Context for the client. It could be used to convey extra information to
-			// the server and/or tweak certain RPC behaviors.
-			ClientContext context;
-
-			// The actual RPC.
-			Status status = fileServerStubs[fileServerIndex]->WriteFile(&context, request, &reply);
-
-			// Act upon its status.
-			assert(status.ok());
-
-			data += std::min(lastByteInFileServer - offset, (ssize_t)nbyte);
-			nbyte -= std::min(lastByteInFileServer - offset, (ssize_t)nbyte);
-			offset = lastByteInFileServer;
-		}
-	}
-	else {
+//	if(cache == nullptr) {
+//		*cache_hit = 0;
+//		while(nbyte > 0) {
+//			int fileServerIndex = ((offset / (STRIP_SIZE * pfsBlockSizeInBytes)) %
+//					openedFiles[foundAt]->getStripWidth()) % NUM_FILE_SERVERS;
+//			uint32_t lastByteInFileServer = offset + STRIP_SIZE * pfsBlockSizeInBytes;
+//			lastByteInFileServer /= (STRIP_SIZE * pfsBlockSizeInBytes);
+//			lastByteInFileServer *= (STRIP_SIZE * pfsBlockSizeInBytes);
+//
+//
+//			WriteFileRequest request;
+//			request.set_name(openedFiles[foundAt]->getName());
+//			request.set_start(offset);
+//			request.set_data(data, std::min(lastByteInFileServer - offset, (ssize_t)nbyte));
+//
+//			// Container for the data we expect from the server.
+//			StatusReply reply;
+//
+//			// Context for the client. It could be used to convey extra information to
+//			// the server and/or tweak certain RPC behaviors.
+//			ClientContext context;
+//
+//			// The actual RPC.
+//			Status status = fileServerStubs[fileServerIndex]->WriteFile(&context, request, &reply);
+//
+//			// Act upon its status.
+//			assert(status.ok());
+//
+//			data += std::min(lastByteInFileServer - offset, (ssize_t)nbyte);
+//			nbyte -= std::min(lastByteInFileServer - offset, (ssize_t)nbyte);
+//			offset = lastByteInFileServer;
+//		}
+//	}
+//	else {
 		*cache_hit = 1;
 		while(nbyte > 0) {
 			uint32_t blockAddr = offset / pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
 
 			uint32_t actualSize = std::min(pfsBlockSizeInBytes - (offset % pfsBlockSizeInBytes), (ssize_t)nbyte);
-			bool hit = cache->write(filedes, offset, actualSize, data);
+			bool hit = Cache::getInstance()->write(filedes, offset, actualSize, data);
 //			std::cerr << "Write: " << offset << " " << nbyte << " " << blockAddr << " " << hit << " " <<
 //					actualSize << "\n";
 			if(!hit) {
 				*cache_hit = 0;
 				char* cacheData = new char[pfsBlockSizeInBytes];
 				getBlockFromFileServer(foundAt, blockAddr, cacheData);
-				cache->addBlock(filedes, blockAddr, cacheData);
+				Cache::getInstance()->addBlock(filedes, blockAddr, cacheData);
 				delete cacheData;
-				cache->write(filedes, offset, actualSize, data);
+				Cache::getInstance()->write(filedes, offset, actualSize, data);
 			}
 			data += actualSize;
 			nbyte -= actualSize;
 			offset += actualSize;
 		}
-	}
+//	}
 //	sleep(10);
 	openedFiles[foundAt]->unlockPermission(offsetBackup, offsetBackup + nbyteBackup, true);
 	return nbyteBackup;
@@ -411,17 +403,15 @@ int PFSClient::closeFile(int filedes) {
 		return ERROR_CLOSE_UNOPENED_FILE;
 	}
 
-	if(cache) {
 		for(int i = 0; i < openedFiles[foundAt]->permissions.size(); i++) {
 			uint32_t blockAddr = openedFiles[foundAt]->permissions[i]->getStart() /
 					pfsBlockSizeInBytes;
 			blockAddr *= pfsBlockSizeInBytes;
 			while(blockAddr <= openedFiles[foundAt]->permissions[i]->getEnd()) {
-				cache->evictBlock(openedFiles[foundAt]->getDescriptor(), blockAddr);
+				Cache::getInstance()->evictBlock(openedFiles[foundAt]->getDescriptor(), blockAddr);
 				blockAddr += pfsBlockSizeInBytes;
 			}
 		}
-	}
 	request.set_hasmodified(openedFiles[foundAt]->hasModified);
 	request.set_size(openedFiles[foundAt]->getSize());
 

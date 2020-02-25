@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 #define PFS_BLOCK_SIZE 1 // 1 Kilobyte
-#define STRIP_SIZE 4     // 4 blocks
+#define STRIP_SIZE 1     // 4 blocks
 #define NUM_FILE_SERVERS 5
 #define CLIENT_CACHE_SIZE 2 // 2 Megabytes
 
